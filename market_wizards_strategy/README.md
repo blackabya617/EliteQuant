@@ -587,6 +587,107 @@ account this money sits in, not which parameter set trades it.
 
 ---
 
+## Session 4: macro timing and earnings-surprise drift - two more angles tested
+
+Two directions genuinely different from everything else in this project:
+macro regime data (what the global-macro wizards actually traded on) and
+fundamental earnings surprises (post-earnings drift, distinct from price
+momentum). Both tested on real data via free sources - FRED for macro,
+Alpha Vantage for earnings, budget-constrained by the latter's 25
+requests/day free cap.
+
+### Macro timing: the yield curve, tested honestly
+
+`macro.py` pulls Fed funds rate, 10-year yield, the 10y-2y curve slope, CPI,
+unemployment and real GDP from FRED (unlimited, no key). The yield curve
+inversion is the most famous recession-timing signal in macro finance -
+worth testing rather than assuming.
+
+**As a standalone SPY timing signal** (exit while inverted, both a hard 0/1
+version and a graduated exposure scale):
+
+| | CAGR% | MaxDD% | Sharpe |
+|---|---|---|---|
+| exit while inverted | 9.06 | -55.19 | 0.58 |
+| graduated exposure scale | 8.47 | -54.49 | 0.60 |
+| SPY buy & hold | 10.92 | **-55.19** | 0.65 |
+
+**Identical drawdown to buy & hold - it provided zero crash protection** while
+giving up return and Sharpe. The mechanism: the curve typically *un-inverts*
+before the actual crash, because the Fed cuts rates in response to
+deteriorating data, which steepens the curve right as the real damage is
+about to happen. 2006's inversions preceded the best pre-crisis year
+(SPY +14-22% forward); 2019's inversion preceded a +22.4% year before COVID
+hit outside the test window. Lead times of 6-24+ months with no consistency
+make this a bad tactical trigger even though it is a real structural warning.
+
+**As an overlay on the validated rotation strategy** (halving exposure while
+inverted, or cutting 30% while the Fed is hiking):
+
+| | CAGR% | MaxDD% | Sharpe |
+|---|---|---|---|
+| rotation, no macro gate | 10.66 | -17.84 | 1.03 |
+| + halved while curve inverted | 10.10 | **-17.84** | 1.04 |
+| + reduced 30% while Fed hiking | 9.99 | **-17.84** | 1.06 |
+
+Drawdown is identical to the third decimal in all three - the macro gate adds
+nothing the price-based filter was not already doing, and costs a bit of
+return. This makes sense: price aggregates everyone's macro view in real
+time, and updates daily; a policy-rate or yield-curve series updates on its
+own much slower schedule and is, in this comparison, strictly redundant with
+what price already captured faster.
+
+### Post-earnings-announcement drift (PEAD)
+
+Distinct mechanism from everything else here: the signal is a fundamental
+surprise (actual EPS vs analyst estimate), not a price or volume pattern, and
+it is one of the most replicated anomalies in the academic literature
+(Bernard & Thomas 1989 and hundreds of successors) - markets are documented to
+underreact to earnings surprises, with price continuing to drift toward the
+"correct" level for weeks afterward.
+
+**Real data constraint, stated plainly:** Alpha Vantage's earnings-surprise
+history is free but capped at 25 requests/day, one call per symbol. That
+budget bought earnings data for 4 large caps - AAPL, MSFT, JPM, XOM, chosen
+for sector spread (tech x2, financials, energy) rather than randomly, which is
+itself a selection choice worth naming. ~300 quarterly events across 4
+companies, entries at T+1 day after the report, benchmarked against each
+stock's own typical N-day return (so "drift" means excess over baseline, not
+just a positive number):
+
+| holding period | big-beat mean excess | t-stat | big-miss mean excess | t-stat |
+|---|---|---|---|---|
+| 20 trading days | -0.12% | -0.23 | -1.36% | -1.08 |
+| 60 trading days | +0.14% | 0.16 | -2.61% | -1.39 |
+| 90 trading days | -1.27% | -0.98 | +1.04% | 0.48 |
+
+**No significant drift at any horizon - every t-stat is near zero, several
+have the wrong sign entirely.** On its own this would read as "PEAD does not
+hold," but that conclusion needs a real caveat: AAPL, MSFT, JPM and XOM are
+among the most heavily analyst-covered, most liquid, most efficiently-priced
+stocks that exist. The academic literature is explicit that PEAD is strongest
+in small and thinly-covered names, precisely because thin coverage is what
+lets a surprise go underreacted-to for weeks - and weakest to nonexistent in
+mega-caps, where dozens of analysts and systematic funds react within minutes.
+Testing PEAD on four of the most-followed stocks on earth is closer to testing
+it in the one place theory says it should already be arbitraged away.
+
+**This is a genuinely open question, not a closed one.** A real test needs a
+broader, less mega-cap-heavy universe - which needs either a paid Alpha
+Vantage tier or a different earnings-surprise data source. Flagged as the
+clearest remaining unexplored thread in this project, not dismissed.
+
+### Where this leaves the running total
+
+Six mechanisms tested against the validated rotation strategy this session
+and last: factor ETFs, literal cut-losses-short/let-winners-run trade
+management, two tax-engineering ideas, yield-curve timing (standalone and as
+an overlay), and Fed-policy timing. All six returned negative or negligible
+results. The one open thread - PEAD on a proper, less concentrated universe -
+remains untested for a data-access reason, not because the idea failed.
+
+---
+
 ## Layout
 
 ```
