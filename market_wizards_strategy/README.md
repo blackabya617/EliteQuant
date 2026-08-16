@@ -521,6 +521,72 @@ swamping it.
 
 ---
 
+## A precise after-tax answer, and why tax engineering doesn't fix it
+
+The earlier tax estimate used an annual-aggregate approximation - lump the
+year's gain together and tax it at one rate. `rotation_tax_aware.py` tracks
+every position's real entry date, real dollar size, and classifies every exit
+as short- or long-term at the moment it actually happens, netting short
+against short and long against long the way the US tax code does, with loss
+carryforward.
+
+**The precise number is worse than the earlier estimate, not better:**
+
+| | pretax CAGR | after-tax CAGR (22%+state) | after-tax CAGR (35%+NIIT) |
+|---|---|---|---|
+| rotation (9,8, vol-capped) | 10.66% | **8.57%** | 6.86% |
+| SPY buy & hold | 12.00% | **10.12%** | - |
+
+A 1.5-3pp gap even in the lowest bracket tested. Only 7.2% of all closed
+positions ever reach long-term status - the strategy's own 3-month average
+holding period means most positions never get close to a year.
+
+### Two tax-engineering ideas, both tested, both fail
+
+**Hold near-1-year winners a little past their normal cutoff** ("buffer") to
+let them cross into long-term treatment - the tax-optimized version of "let
+winners run," realizing losses immediately but stretching gains toward the
+better rate:
+
+| buffer | pct long-term | after-tax CAGR (22%+state) | improvement |
+|---|---|---|---|
+| 0 (none) | 7.2% | 8.57% | - |
+| 4 slots | 9.1% | 8.63% | **+0.05pp** |
+
+Negligible. There is simply not enough opportunity - so few positions ever
+approach the one-year mark that giving them a grace period barely moves the
+mix.
+
+**Rebalance quarterly instead of monthly**, trading pretax quality for lower
+turnover:
+
+| | pretax CAGR | pretax Sharpe | pct long-term | after-tax (22%+state) |
+|---|---|---|---|---|
+| monthly | 10.66% | 1.03 | 7.2% | **8.65%** |
+| quarterly | 7.89% | 0.79 | 17.7% | **7.78%** |
+
+Quarterly more than doubles the long-term share, but the pretax cost (Sharpe
+1.03 -> 0.79, drawdown -17.8% -> -25.2%) is larger than the tax saved. Worse
+after-tax at every bracket tested, not better.
+
+### The honest conclusion
+
+**No tax-engineering trick closes this gap, because the problem is turnover
+itself, not the absence of a clever holding-period rule around it.** Every
+lever that reduces turnover enough to matter also reduces the pretax
+Sharpe by more than it saves in tax. In a taxable Robinhood account, the
+rotation strategy - the only strategy in this entire project that beat SPY on
+risk-adjusted return - loses to plain buy-and-hold once tax is applied
+correctly.
+
+This is not a reason to abandon the strategy; it is a reason to hold it in a
+account where the comparison flips entirely: none of this drag exists in a
+Roth or traditional IRA, because nothing is realized as taxable income along
+the way. The single highest-value decision left in this project is which
+account this money sits in, not which parameter set trades it.
+
+---
+
 ## Layout
 
 ```
