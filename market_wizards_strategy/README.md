@@ -220,6 +220,89 @@ from an interest-rate environment that no longer exists.
 
 ---
 
+## Individual stocks: testing the one anomaly the earlier work never touched
+
+Every test above was an index or a basket of indices, and a portfolio that owns
+SPY-like exposure cannot out-earn SPY. Picking individual names can, because
+the spread between the best and worst index members is enormous. Cross-sectional
+momentum is also the most replicated anomaly in the academic literature and
+what the *Stock Market Wizards* traders (Minervini, Okumus, Lescarbeau) were
+doing under the name "relative strength".
+
+`stocks.py` combines several traders' ideas rather than copying one: relative
+strength ranking, a 12-1 or 6-1 momentum window, Minervini's stage-2 trend
+template, Jones's index-level regime filter, and Dennis/Eckhardt volatility-
+scaled sizing.
+
+### Survivorship: what is and is not fixed
+
+Two different biases get conflated. The severe one is **look-ahead membership**
+— backtesting 2005 with today's index list, so the strategy "knows" which
+companies would later become members. `universe.py` fixes this completely by
+reading membership point-in-time from the historical record.
+
+The other is **delisting bias**. Of 1,205 companies that were ever in the index
+since 1996, **461 (38%) have since left it**. Free data does not carry their
+prices: of a 20-name sample of delisted tickers, Yahoo returned usable history
+for none — and the three that appeared to work were later companies reusing the
+ticker, which would inject wrong prices. Coverage of the point-in-time index:
+
+| year | 2000 | 2005 | 2010 | 2015 | 2020 | 2026 |
+|---|---|---|---|---|---|---|
+| coverage | 59% | 64% | 70% | 76% | 87% | 98% |
+
+Everything below is therefore **optimistic**, most severely in the early years.
+Conclusions lean on 2015+ where coverage is 76-98%.
+
+### Results
+
+| 2000-2026 | CAGR% | MaxDD% | Vol% | Sharpe | Calmar |
+|---|---|---|---|---|---|
+| momentum, no filters | 9.68 | -62.2 | 21.4 | 0.54 | 0.16 |
+| + Minervini trend template | 8.62 | -44.2 | 18.6 | 0.54 | 0.19 |
+| + Jones regime filter | 8.83 | -26.2 | 15.2 | 0.64 | 0.34 |
+| SPY buy & hold | 8.56 | -50.8 | 15.1 | 0.62 | 0.17 |
+
+Raw momentum beats SPY on return — 9.68% against 8.56%. That is the first thing
+tested here that does. But it runs 21.4% volatility against SPY's 15.1%, and
+its Sharpe is *lower*. Which raises the only question that matters.
+
+### Is it alpha, or is it leverage?
+
+Regressing the strategy's monthly returns on SPY's separates skill from simply
+holding more risk. A t-statistic below 2 means the alpha cannot be told apart
+from luck.
+
+| 2000-2026 | CAGR% | beta | alpha% | t-stat |
+|---|---|---|---|---|
+| top5, 6-1 momentum | 14.12 | 0.98 | +5.09 | **0.93** |
+| top10, 6-1 momentum | 11.93 | 0.93 | +4.10 | **0.97** |
+| top20, 6-1 momentum | 10.60 | 0.86 | +3.08 | **0.90** |
+| top50, 12-1 momentum | 8.77 | 0.80 | +0.80 | **0.33** |
+
+| 2015-2026 (better coverage) | CAGR% | beta | alpha% | t-stat |
+|---|---|---|---|---|
+| top5, 6-1 momentum | 22.68 | **1.23** | +0.58 | 0.06 |
+| top10, 6-1 momentum | 17.88 | 1.14 | **-1.91** | -0.26 |
+| top20, 12-1 momentum | 12.31 | 0.98 | **-4.08** | -0.64 |
+| top50, 12-1 momentum | 10.38 | 0.88 | **-4.32** | -1.14 |
+| SPY buy & hold | 14.32 | 1.00 | 0.00 | - |
+
+**Not a single configuration produces statistically significant alpha.** Every
+t-stat is below 1. In the period with trustworthy data coverage the alpha is
+mostly *negative*, and SPY's Sharpe (0.97) beats every variant.
+
+The concentrated portfolios look impressive — top5 returns 22.68% a year since
+2015 — but they carry beta 1.23. That return is available by holding SPY on
+1.23x margin, without the single-name risk, and it is measured on data biased
+in the strategy's favour.
+
+This is consistent with the published record rather than contrary to it:
+documented anomalies decay sharply after publication, and momentum's edge was
+established largely on pre-2000 data.
+
+---
+
 ## Layout
 
 ```
