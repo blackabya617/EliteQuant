@@ -110,6 +110,116 @@ did:
 
 ---
 
+## What the Turtles actually did, and what happened when we copied it
+
+The earlier tests all shared a structural flaw: they were long-only, in equity
+ETFs, in a cash account. That is not what any of the traders in the book were
+doing. `turtle.py` implements the real 1983 curriculum:
+
+| Turtles | earlier build here |
+|---|---|
+| long **and** short | long only |
+| ~24 futures: FX, rates, metals, energy, grains, indices | 20 equity-heavy ETFs |
+| futures margin, gross notional far above equity | cash-capped at 100% |
+| pyramid to 4 Units at 1/2 N intervals | no pyramiding |
+| Donchian exit (10-day S1 / 20-day S2) | ATR trailing stop |
+| skip rule + 55-day failsafe | none |
+| unit caps 4/market, 6/correlated group, 12/direction | position count only |
+
+Implemented faithfully and run on 26 ETF futures-proxies (2007-2026, adding FX,
+grains and energy to get genuine cross-asset diversification).
+
+### First result was a bug, not a finding
+
+The literal Turtle sizing rule - one Unit is the quantity for which a 1N move
+equals 1% of equity - produces this in an ETF account:
+
+| | price | N (ATR) | notional for ONE Unit | x equity |
+|---|---|---|---|---|
+| SPY | 776.34 | 7.94 | $9,780 | 0.98x |
+| IEF | 93.04 | 0.35 | $26,254 | **2.63x** |
+| UUP | 28.11 | 0.11 | $25,547 | **2.55x** |
+
+A single Unit of a low-volatility instrument demands 2.6x equity in notional.
+That is entirely normal in futures, where margin is ~5% of notional - you can
+hold $250k of T-note futures against $10k. It is impossible in an equity
+account. Run unmodified, the system posts a -99% drawdown, which is an
+artefact of the translation, not a property of the rules.
+
+### Scaled to achievable leverage, 2007-2026
+
+| config | CAGR% | MaxDD% | Sharpe | Long P&L | Short P&L |
+|---|---|---|---|---|---|
+| 1.0x lev, 0.10% risk/unit | -1.32 | -39.7 | -0.06 | +$1,495 | **-$3,812** |
+| 1.5x lev, 0.10% risk/unit | -1.87 | -39.9 | -0.10 | +$3,268 | **-$6,403** |
+| 2.0x lev, 0.25% risk/unit | -2.21 | -63.1 | 0.02 | +$4,183 | **-$7,806** |
+| SPY buy & hold | 11.00 | -55.2 | 0.63 | | |
+
+Short P&L is negative in every configuration tested. That is the finding.
+
+### Where the money went
+
+| asset group | long | short | total |
+|---|---|---|---|
+| metals | +2,443 | -592 | **+1,851** |
+| energy | -741 | +1,640 | **+900** |
+| rates | +873 | -733 | +141 |
+| real estate | +133 | -623 | -490 |
+| commodity | -462 | -39 | -500 |
+| FX | -178 | -1,024 | -1,202 |
+| grains | -836 | -610 | -1,446 |
+| equity | +261 | -1,833 | **-1,571** |
+
+Shorting equities into a 19-year bull market with V-shaped recoveries was the
+single largest loss. The one place shorting paid was energy, where USO and UNG
+grind downward on contango.
+
+The payoff ratios are healthy - longs win 22.9% of the time at 3.7:1, shorts
+19.4% at 3.1:1. Trend following is supposed to look like that. The problem is
+that 19.4% at 3.1:1 is a negative expectancy, and no amount of position sizing
+fixes a negative edge.
+
+### It is insurance, not an alpha engine
+
+| period | Turtle CAGR% | SPY CAGR% | long P&L | short P&L |
+|---|---|---|---|---|
+| 2007-04..2009-12 GFC + crash | **+2.35** | **-7.74** | +30 | **+140** |
+| 2010-01..2014-12 post-GFC | -2.01 | +14.99 | +314 | -1,797 |
+| 2015-01..2019-12 low-vol grind | -2.73 | +11.59 | -451 | -926 |
+| 2020-01..2022-12 COVID + inflation | +0.65 | +7.30 | +867 | -911 |
+| 2023-01..2026-08 recent | -2.79 | +23.32 | +1,282 | -2,309 |
+
+The system made money through the financial crisis while the index lost 7.7% a
+year, and bled in every choppy bull market since. That is the documented
+experience of the trend-following industry as a whole - 2011 and 2018 were
+years when most constituents of the SG Trend Index finished red.
+
+### Combining it with a core does not rescue it
+
+Correlation to SPY is -0.09, which is a genuinely good diversifier property.
+But a diversifier with negative expected return only trades return away for
+drawdown one-for-one:
+
+| blend | CAGR% | MaxDD% | Sharpe | Calmar |
+|---|---|---|---|---|
+| rotation 90% + turtle 10% | 10.18 | -21.4 | 0.77 | 0.48 |
+| rotation only | 11.42 | -24.1 | 0.80 | 0.47 |
+| SPY buy & hold | 12.00 | -46.3 | 0.81 | 0.26 |
+| turtle only | -1.48 | -39.2 | -0.12 | -0.04 |
+
+The Calmar improvement from adding the Turtle sleeve is 0.47 -> 0.48, which is
+noise, and Sharpe falls.
+
+### One thing the backtest cannot capture
+
+The Turtles traded futures, which means they posted ~5-10% margin and **earned
+T-bill interest on the entire collateral balance**. In 1983-1988 that was 8-10%
+a year, risk-free, on top of trading P&L. None of the tests here include that,
+and no ETF account earns it. A meaningful slice of the original returns came
+from an interest-rate environment that no longer exists.
+
+---
+
 ## Layout
 
 ```
