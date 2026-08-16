@@ -1,88 +1,151 @@
 """
-Data Manager - Handles fetching and caching historical data.
+Data Manager - fetches and caches real daily OHLCV data.
+
+Uses Yahoo Finance's chart endpoint directly (the yfinance package's quote
+endpoints are rate-limited in this environment; the chart endpoint is not).
+Adjusts OHLC for splits and dividends so backtests reflect total return.
 """
 
-import pandas as pd
-import yfinance as yf
-from datetime import datetime, timedelta
+import json
 import os
-import pickle
-from config import SYMBOL, LOOKBACK_DAYS
+import subprocess
+import time
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+
+CACHE_DIR = os.environ.get("MW_CACHE_DIR", "/tmp/market_wizards_cache")
+CHART_HOSTS = ("query1", "query2")
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+)
 
 
-class DataManager:
-    def __init__(self, cache_dir="/tmp/market_wizards_cache"):
-        self.cache_dir = cache_dir
-        os.makedirs(cache_dir, exist_ok=True)
-        self.cache_file = os.path.join(cache_dir, f"{SYMBOL}_data.pkl")
+class DataError(RuntimeError):
+    """Raised when real market data could not be obtained."""
 
-    def fetch_data(self, symbol=SYMBOL, days_back=LOOKBACK_DAYS, force_refresh=False):
-        """Fetch historical data with caching."""
-        if not force_refresh and os.path.exists(self.cache_file):
-            try:
-                df = pd.read_pickle(self.cache_file)
-                days_in_cache = (datetime.now() - df.index[-1]).days
-                if days_in_cache < 1:  # Cache is fresh (less than 1 day old)
-                    print(f"✅ Loaded {len(df)} candles from cache")
-                    return df
-            except:
-                pass
 
-        print(f"Fetching {symbol} data from Yahoo Finance...")
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days_back)
+def _cache_path(symbol):
+    return os.path.join(CACHE_DIR, f"{symbol.upper()}_daily.pkl")
 
+
+def _download_chart(symbol, start_ts, end_ts, retries=4):
+    """Download the raw chart JSON to a temp file and return the parsed dict."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    raw_path = os.path.join(CACHE_DIR, f"{symbol.upper()}_raw.json")
+
+    last_err = None
+    for host in CHART_HOSTS:
+        url = (
+            f"https://{host}.finance.yahoo.com/v8/finance/chart/{symbol}"
+            f"?period1={start_ts}&period2={end_ts}&interval=1d&events=div%2Csplit"
+        )
+        cmd = [
+            "curl", "-sS", "-o", raw_path, "-w", "%{http_code}",
+            "--retry", str(retries), "--retry-delay", "8", "--retry-all-errors",
+            "-H", f"User-Agent: {UA}",
+            "-H", "Accept: application/json",
+            url,
+        ]
         try:
-            # Retry logic for rate limiting
-            df = None
-            retries = 3
-            for attempt in range(retries):
-                try:
-                    df = yf.download(symbol, start=start_date, end=end_date, progress=False)
-                    break
-                except Exception as e:
-                    if attempt < retries - 1:
-                        print(f"  Attempt {attempt+1} failed, retrying in 5s...")
-                        import time
-                        time.sleep(5)
-                    else:
-                        raise
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            if out.stdout.strip() != "200":
+                last_err = f"{host} returned HTTP {out.stdout.strip()}"
+                continue
+            with open(raw_path) as fh:
+                payload = json.load(fh)
+            if payload.get("chart", {}).get("error"):
+                last_err = f"{host}: {payload['chart']['error']}"
+                continue
+            return payload
+        except Exception as exc:  # noqa: BLE001 - report whatever curl/json raised
+            last_err = f"{host}: {exc}"
+            time.sleep(2)
 
-            if df is None or len(df) == 0:
-                raise Exception("No data returned")
+    raise DataError(f"Could not download {symbol} chart data ({last_err})")
 
-            # Cache the data
-            df.to_pickle(self.cache_file)
-            print(f"✅ Fetched {len(df)} candles and cached")
-            return df
 
-        except Exception as e:
-            print(f"❌ Failed to fetch data: {e}")
-            # Try to return cached data if available
-            if os.path.exists(self.cache_file):
-                print("Using cached data (may be stale)")
-                return pd.read_pickle(self.cache_file)
-            return None
+def _chart_to_frame(payload):
+    """Convert Yahoo chart JSON into a split/dividend-adjusted OHLCV frame."""
+    result = payload["chart"]["result"][0]
+    quote = result["indicators"]["quote"][0]
 
-    def create_synthetic_data(self, days=2000):
-        """Create synthetic OHLCV data for testing."""
-        import numpy as np
+    df = pd.DataFrame(
+        {
+            "Open": quote["open"],
+            "High": quote["high"],
+            "Low": quote["low"],
+            "Close": quote["close"],
+            "Volume": quote["volume"],
+        },
+        index=pd.to_datetime(result["timestamp"], unit="s").tz_localize(None).normalize(),
+    )
 
-        dates = pd.date_range(end=datetime.now(), periods=days, freq='D')
-        prices = [420]  # Start at SPY ~420
+    adj = result["indicators"].get("adjclose")
+    if adj and adj[0].get("adjclose"):
+        df["AdjClose"] = adj[0]["adjclose"]
+    else:
+        df["AdjClose"] = df["Close"]
 
-        for _ in range(days - 1):
-            change = np.random.normal(0.0005, 0.015)  # ~0.05% mean, 1.5% std dev
-            prices.append(prices[-1] * (1 + change))
+    df = df.dropna(subset=["Open", "High", "Low", "Close"])
 
-        data = {
-            'Open': prices,
-            'High': [p * (1 + abs(np.random.normal(0, 0.005))) for p in prices],
-            'Low': [p * (1 - abs(np.random.normal(0, 0.005))) for p in prices],
-            'Close': prices,
-            'Volume': np.random.randint(50000000, 150000000, days),
-            'Adj Close': prices
-        }
+    # Scale the whole bar by adjclose/close so highs, lows and opens stay
+    # consistent with the adjusted close. Without this, a stop measured against
+    # an unadjusted Low but an adjusted entry would fire on dividend gaps.
+    factor = df["AdjClose"] / df["Close"]
+    for col in ("Open", "High", "Low", "Close"):
+        df[col] = df[col] * factor
 
-        df = pd.DataFrame(data, index=dates)
-        return df
+    df = df.drop(columns=["AdjClose"])
+    df["Volume"] = df["Volume"].fillna(0).astype("int64")
+
+    # Guard against upstream glitches where the bar's range excludes O/C.
+    df["High"] = df[["High", "Open", "Close"]].max(axis=1)
+    df["Low"] = df[["Low", "Open", "Close"]].min(axis=1)
+
+    return df[~df.index.duplicated(keep="last")].sort_index()
+
+
+def load(symbol="SPY", start="1993-01-01", end=None, max_age_hours=12, refresh=False):
+    """Return a daily OHLCV frame for `symbol`, cached on disk.
+
+    Raises DataError if real data cannot be fetched and no cache exists. The
+    backtester must never silently fall back to simulated prices - a backtest
+    on synthetic data measures nothing.
+    """
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    path = _cache_path(symbol)
+
+    if not refresh and os.path.exists(path):
+        age_hours = (time.time() - os.path.getmtime(path)) / 3600
+        if age_hours < max_age_hours:
+            return pd.read_pickle(path)
+
+    start_ts = int(pd.Timestamp(start).timestamp())
+    end_ts = int(pd.Timestamp(end or datetime.now()).timestamp()) + 86400
+
+    try:
+        df = _chart_to_frame(_download_chart(symbol, start_ts, end_ts))
+    except DataError:
+        if os.path.exists(path):
+            return pd.read_pickle(path)
+        raise
+
+    df.to_pickle(path)
+    return df
+
+
+def add_atr(df, period=20):
+    """Wilder's Average True Range, in price units."""
+    prev_close = df["Close"].shift(1)
+    true_range = pd.concat(
+        [
+            df["High"] - df["Low"],
+            (df["High"] - prev_close).abs(),
+            (df["Low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    return true_range.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
