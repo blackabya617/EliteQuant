@@ -120,8 +120,9 @@ def cmd_backtest():
                        ("Calmar", "calmar"), ("final equity", "final_equity")]:
         print(f"{label:16s}{strat_m[key]:>14,.2f}{bench_m[key]:>14,.2f}")
 
-    print("\nRotation matches the benchmark's Sharpe with roughly half its")
-    print("drawdown. It does not out-earn it. Read the README before trusting it.")
+    print("\nHigher Sharpe, roughly a third of the drawdown, slightly lower raw")
+    print("return - pretax. After tax in a taxable account it loses to buy and")
+    print("hold outright (see README). Read the README before trusting any of this.")
     return equity, log
 
 
