@@ -17,6 +17,7 @@ import sys
 from datetime import datetime
 
 import config
+import papertrade
 import tracker
 from rotation import RotationParams, backtest, metrics, month_end_prices, target_weights
 
@@ -124,6 +125,26 @@ def cmd_backtest():
     return equity, log
 
 
+def cmd_run():
+    """Broker-free paper trading: price the book, rebalance, record. No keys."""
+    state, target, actions = papertrade.step()
+    print(f"\nPaper account (simulated, no broker)  {datetime.now():%Y-%m-%d}")
+    print("=" * 58)
+    print(f"equity          : ${papertrade.load()['history'][-1]['equity']:,.2f}")
+    print(f"target          : {', '.join(f'{s} {w:.0%}' for s, w in target.items()) or 'ALL CASH'}")
+    if actions:
+        print(f"\nrebalanced ({len(actions)} trades):")
+        for a in actions:
+            print(f"  {a['action'].upper():4s} {a['symbol']:5s} ${a['value']:>9,.2f} @ {a['price']:.2f}")
+    else:
+        print("\nno rebalance needed")
+    rep = papertrade.report(state)
+    if "message" not in rep:
+        print(f"\nsince {rep['since']}: strategy {rep['strategy_return_pct']:+.2f}%  "
+              f"SPY {rep['spy_return_pct']:+.2f}%  excess {rep['excess_pct']:+.2f}%")
+    return state
+
+
 def cmd_track():
     """Show real forward performance since paper trading began."""
     rep = tracker.report()
@@ -135,7 +156,7 @@ def cmd_track():
     return rep
 
 
-COMMANDS = {"signal": cmd_signal, "paper": cmd_paper,
+COMMANDS = {"signal": cmd_signal, "run": cmd_run, "paper": cmd_paper,
             "backtest": cmd_backtest, "track": cmd_track}
 
 if __name__ == "__main__":

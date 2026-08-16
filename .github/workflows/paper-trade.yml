@@ -1,32 +1,24 @@
 name: Paper trade
 
-# Runs the rotation against the Alpaca paper account on a schedule.
-# Credentials come from repository secrets - they are never in the repo,
-# never in the logs (GitHub masks them), and nobody but you can read them back.
-#
-# Set them once at:
-#   Settings -> Secrets and variables -> Actions -> New repository secret
-#     ALPACA_API_KEY
-#     ALPACA_API_SECRET
+# Broker-free forward test. No API keys, no account, nothing to leak.
+# Prices the simulated book against real closes, rebalances when the month
+# turns, and commits the updated state so the record is auditable.
 
 on:
   schedule:
-    # 16:15 New York time on weekdays, expressed in UTC.
-    # 20:15 UTC = 16:15 EDT (summer). In winter this fires at 15:15 ET,
-    # still after the close, which is what matters.
-    - cron: "15 20 * * 1-5"
+    - cron: "15 21 * * 1-5"     # weekdays, after the US close
   workflow_dispatch:
-    inputs:
-      execute:
-        description: "Actually send orders (false = dry run)"
-        type: boolean
-        default: false
+
+permissions:
+  contents: write
 
 jobs:
-  rotate:
+  run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: claude/market-wizards-strategies-fbnhyz
 
       - uses: actions/setup-python@v5
         with:
@@ -36,30 +28,14 @@ jobs:
         working-directory: market_wizards_strategy
         run: pip install -q -r requirements.txt
 
-      - name: Restore state (forward performance log)
-        uses: actions/cache@v4
-        with:
-          path: ~/.market_wizards
-          key: mw-state-${{ github.run_id }}
-          restore-keys: mw-state-
-
-      - name: Run rotation
+      - name: Step the paper account
         working-directory: market_wizards_strategy
-        env:
-          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
-          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
-          # Scheduled runs stay in dry-run unless you set the repo variable
-          # EXECUTE_PAPER_TRADES to "true", or tick the box on a manual run.
-          EXECUTE_PAPER_TRADES: ${{ inputs.execute || vars.EXECUTE_PAPER_TRADES || 'false' }}
-        run: |
-          python main.py paper
-          echo "---"
-          python main.py track
+        run: python main.py run
 
-      - name: Save forward log as an artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: forward-log
-          path: ~/.market_wizards/forward_log.jsonl
-          if-no-files-found: ignore
+      - name: Commit the updated record
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add market_wizards_strategy/paper_state.json
+          git diff --staged --quiet || git commit -m "paper: daily mark $(date -u +%Y-%m-%d)"
+          git push
