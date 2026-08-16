@@ -1,0 +1,65 @@
+name: Paper trade
+
+# Runs the rotation against the Alpaca paper account on a schedule.
+# Credentials come from repository secrets - they are never in the repo,
+# never in the logs (GitHub masks them), and nobody but you can read them back.
+#
+# Set them once at:
+#   Settings -> Secrets and variables -> Actions -> New repository secret
+#     ALPACA_API_KEY
+#     ALPACA_API_SECRET
+
+on:
+  schedule:
+    # 16:15 New York time on weekdays, expressed in UTC.
+    # 20:15 UTC = 16:15 EDT (summer). In winter this fires at 15:15 ET,
+    # still after the close, which is what matters.
+    - cron: "15 20 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: "Actually send orders (false = dry run)"
+        type: boolean
+        default: false
+
+jobs:
+  rotate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: market_wizards_strategy
+        run: pip install -q -r requirements.txt
+
+      - name: Restore state (forward performance log)
+        uses: actions/cache@v4
+        with:
+          path: ~/.market_wizards
+          key: mw-state-${{ github.run_id }}
+          restore-keys: mw-state-
+
+      - name: Run rotation
+        working-directory: market_wizards_strategy
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+          # Scheduled runs stay in dry-run unless you set the repo variable
+          # EXECUTE_PAPER_TRADES to "true", or tick the box on a manual run.
+          EXECUTE_PAPER_TRADES: ${{ inputs.execute || vars.EXECUTE_PAPER_TRADES || 'false' }}
+        run: |
+          python main.py paper
+          echo "---"
+          python main.py track
+
+      - name: Save forward log as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forward-log
+          path: ~/.market_wizards/forward_log.jsonl
+          if-no-files-found: ignore
