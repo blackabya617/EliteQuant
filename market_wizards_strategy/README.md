@@ -303,6 +303,91 @@ established largely on pre-2000 data.
 
 ---
 
+## Statistical validation, and the tax problem
+
+### Is the drawdown edge real, or one lucky path?
+
+A single max-drawdown number from one 18-year history is a sample of one.
+Block-bootstrapping the monthly returns (4,000 paths, six-month blocks to
+preserve sequencing, resampling strategy and benchmark on the *same* blocks so
+both live in the same imagined history):
+
+| | P(rotation better) |
+|---|---|
+| shallower drawdown | **96.7%** |
+| higher Calmar | 88.5% |
+| higher Sharpe | 81.1% |
+| higher CAGR | **55.0%** |
+
+The drawdown edge clears significance. The return edge is a coin flip, and
+always has been. Anyone claiming this strategy "beats the market" is reading
+the 55% column as though it were the 96.7% one.
+
+### Walk-forward
+
+Refitting every two years on the prior five and trading the winner out of
+sample — the hardest test in the repo, because nothing is chosen with
+hindsight:
+
+| | CAGR% | MaxDD% | Sharpe | Calmar |
+|---|---|---|---|---|
+| walk-forward rotation | 11.60 | **-15.45** | 0.94 | **0.75** |
+| SPY, same window | 13.52 | -23.93 | 0.98 | 0.57 |
+
+More important than the curve: the optimiser chose a **9-month lookback and
+eight slots in five of seven windows.** Parameters that keep being rediscovered
+on unseen data are worth far more than parameters that merely win one sweep.
+The defaults changed from (3 months, five slots) to (9, 8) on that basis.
+
+### Volatility capping
+
+Scaling exposure down when realised volatility runs hot. Applied *on top of*
+rotation it does not raise return, but it buys drawdown cheaply:
+
+| config | CAGR% | MaxDD% | Sharpe | Calmar |
+|---|---|---|---|---|
+| 9mo/top8, no cap | 12.35 | -20.89 | 0.97 | 0.59 |
+| **9mo/top8, 10% vol cap** | **10.66** | **-17.84** | **1.03** | **0.60** |
+| 9mo/top8, 6% vol cap | 7.42 | -15.61 | 0.96 | 0.48 |
+| SPY buy & hold | 12.00 | -46.32 | 0.81 | 0.26 |
+
+Sharpe 1.03 is the highest figure anywhere in this project. Note it is bought
+with 1.7pp of CAGR, not conjured.
+
+### Leverage converts the Sharpe edge into return — before tax
+
+| | CAGR% | MaxDD% | Sharpe |
+|---|---|---|---|
+| rotation, vol-matched to SPY (1.21x) | **13.67** | -25.02 | 0.90 |
+| SPY buy & hold | 12.00 | -46.32 | 0.81 |
+
+Median bootstrap edge +1.75pp, P(higher CAGR) 71%. Financing charged at 5%.
+
+### And then tax eats it
+
+The rotation turns over ~33% a month, average holding **3.1 months**, so
+essentially every gain is short-term and taxed as ordinary income each year.
+Buy-and-hold defers capital gains until sale and compounds on money it has not
+yet handed over. That deferral is itself a return, and it is the largest
+structural advantage index investing holds over any active strategy.
+
+| bracket | rotation | rotation 1.21x | SPY B&H | edge |
+|---|---|---|---|---|
+| 22% + state | 8.86 | 9.87 | 10.65 | **-0.78** |
+| 24% + state | 8.62 | 9.60 | 10.65 | **-1.05** |
+| 32% + state | 7.64 | 8.52 | 10.65 | **-2.13** |
+| 35% + NIIT + state | 6.80 | 7.60 | 10.06 | **-2.47** |
+
+Pre-tax the levered rotation beats SPY by 1.69pp. After tax it loses by 0.78 to
+2.47pp depending on bracket. **In a taxable account the strategy does not beat
+buy-and-hold, and the higher the bracket the worse it gets.**
+
+The same strategy in a tax-sheltered account keeps the entire pre-tax result,
+because none of the annual realisations are taxed. That single fact is worth
+more than every parameter decision in this repository combined.
+
+---
+
 ## Layout
 
 ```

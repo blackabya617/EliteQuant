@@ -23,7 +23,8 @@ import numpy as np
 import pandas as pd
 
 import data_manager as dm
-from rotation import DEFAULT_UNIVERSE, RotationParams, month_end_prices, select
+from rotation import (DEFAULT_UNIVERSE, RotationParams, month_end_prices, select,
+                      target_weights)
 
 STATE_FILE = "paper_state.json"
 COST_BPS = 10.0
@@ -140,9 +141,13 @@ def step(directory=None, capital=10_000.0, force_rebalance=False):
         state["initial_capital"] = capital
         state["cash"] = capital
 
+    # Use target_weights so the live book carries the same volatility cap the
+    # backtest applies. Deriving weights as 1/top_n here would silently run the
+    # account at full exposure while the tested strategy runs de-risked.
     monthly = month_end_prices()
     params = RotationParams()
-    target = {s: 1 / params.top_n for s in select(monthly, params)}
+    signal = target_weights(params)
+    target = signal["holdings"]
 
     symbols = sorted(set(DEFAULT_UNIVERSE) | set(state["shares"]) | {"SPY"})
     prices, asof = _latest_prices(symbols)
