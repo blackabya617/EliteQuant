@@ -17,6 +17,7 @@ import sys
 from datetime import datetime
 
 import config
+import tracker
 from rotation import RotationParams, backtest, metrics, month_end_prices, target_weights
 
 
@@ -89,6 +90,9 @@ def cmd_paper():
                        "executed": config.EXECUTE_PAPER_TRADES,
                        "actions": actions}, fh, indent=2)
 
+        tracker.record(float(account["equity"]), list(target["holdings"]),
+                       note="dry-run" if not config.EXECUTE_PAPER_TRADES else "live")
+
     except BrokerError as exc:
         print(f"\nBroker error: {exc}\n")
         sys.exit(1)
@@ -119,7 +123,19 @@ def cmd_backtest():
     return equity, log
 
 
-COMMANDS = {"signal": cmd_signal, "paper": cmd_paper, "backtest": cmd_backtest}
+def cmd_track():
+    """Show real forward performance since paper trading began."""
+    rep = tracker.report()
+    print("\nForward performance (not a backtest - this is what actually happened)")
+    print("=" * 62)
+    for k, v in rep.items():
+        label = k.replace("_", " ")
+        print(f"  {label:24s} {v:>10.2f}" if isinstance(v, float) else f"  {label:24s} {v}")
+    return rep
+
+
+COMMANDS = {"signal": cmd_signal, "paper": cmd_paper,
+            "backtest": cmd_backtest, "track": cmd_track}
 
 if __name__ == "__main__":
     command = sys.argv[1] if len(sys.argv) > 1 else "signal"
