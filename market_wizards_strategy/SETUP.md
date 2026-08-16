@@ -35,6 +35,35 @@ This prints the orders it *would* send and stops. If the list looks right
 (five ETFs at 20% each), set `EXECUTE_PAPER_TRADES=true` and run it again to
 actually place them.
 
+## Where the keys live
+
+The keys never need to be shared with anyone, including an assistant. Pick one:
+
+**A. Your own machine.** Put them in `.env` as above and run it locally. The
+keys never leave your computer. Simplest and safest.
+
+**B. GitHub Actions** (`.github/workflows/paper-trade.yml`, already committed).
+Runs after the close on weekdays without your machine being on. Set the keys
+once:
+
+> repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+>   `ALPACA_API_KEY`
+>   `ALPACA_API_SECRET`
+
+GitHub encrypts them, masks them in logs, and does not expose them to pull
+requests from forks. Scheduled runs stay in dry run until you add a repository
+*variable* `EXECUTE_PAPER_TRADES` set to `true`, or tick the box on a manual
+"Run workflow".
+
+One caution: **EliteQuant is a public repo**, so the workflow's logs are
+world-readable. The secrets themselves stay masked and the account number is
+truncated, but if that bothers you, move this code to a private repo before
+arming it.
+
+Never paste API keys into a chat window, an issue, or a commit. If you ever do
+by accident, rotate them immediately from the Alpaca dashboard — regenerating
+takes seconds and instantly invalidates the old pair.
+
 ## Running it on a schedule
 
 The rotation rebalances monthly, so the meaningful run is the first trading day

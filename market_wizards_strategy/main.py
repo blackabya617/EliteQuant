@@ -65,7 +65,8 @@ def cmd_paper():
 
     try:
         account = broker.account()
-        print(f"\npaper account   : {account['account_number']}")
+        # Only the last four digits: CI logs on a public repo are world-readable.
+        print(f"\npaper account   : ****{str(account['account_number'])[-4:]}")
         print(f"equity          : ${float(account['equity']):,.2f}")
         print(f"buying power    : ${float(account['buying_power']):,.2f}")
         print(f"market open     : {broker.clock()['is_open']}\n")
