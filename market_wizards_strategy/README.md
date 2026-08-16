@@ -388,6 +388,139 @@ more than every parameter decision in this repository combined.
 
 ---
 
+## Session 3: factor ETFs, and testing "cut losses short, let winners run" literally
+
+The rotation strategy rebalances on a calendar - every month it holds whatever
+ranks in the top N, full stop. It does not know whether a position is up 40%
+or down 2%; it drops a winner from the ranking exactly as readily as a loser.
+That is not "cut losses short, let winners run," it is "trade the calendar."
+`swing.py` builds the literal version: cross-sectional ranking for entries,
+combined with engine.py's per-position ATR stop and chandelier trail (already
+validated as honest in that module) for exits, so positions leave the book by
+hitting their own stop or continue running as long as their trend holds -
+independent of any calendar.
+
+### Factor ETFs added to the rotation universe: no improvement
+
+MTUM, QUAL, USMV, VLUE, SIZE, SPLV added to the existing 20-ETF universe,
+tested over the window where all of them have data (2013-2026):
+
+| config | CAGR% | MaxDD% | Sharpe |
+|---|---|---|---|
+| 9mo/top8, +6 factor ETFs | 10.11 | -11.43 | 0.97 |
+| 9mo/top10, +6 factor ETFs | 11.00 | -11.08 | 1.06 |
+| 9mo/top8, original 20 | 11.22 | -12.11 | **1.07** |
+| SPY buy & hold (same window) | 14.29 | -23.93 | 1.00 |
+
+The original universe is at least as good as the expanded one. Adding factor
+ETFs did not help - a negative result, logged rather than pursued further.
+
+### Individual stocks with real trade-level risk management
+
+Two bugs surfaced building this and are worth naming, because they explain
+early nonsense results: (1) daily price panels built from a dict of Series
+were not forward-filled, so one ETF's data gap turned a held position's mark
+into NaN that silently poisoned every equity value from that day forward; (2)
+the first version force-exited every position the instant SPY dipped below its
+200-day average, which is a market-wide flatten disguised as a stop - it
+flattened winners still trending fine exactly as readily as losers, the
+opposite of the instruction. Both fixed: prices are ffilled, and the regime
+filter now only gates new entries, never forces an existing position out.
+
+**On the ETF universe** (validates the mechanism on clean data first): still
+loses to SPY across every configuration tested, 3.8-5.6% CAGR against SPY's
+14.3%. ETFs are already diversified baskets - there is no fat right tail for
+"let winners run" to capture, because a fund's own diversification has already
+averaged away the individual-name dispersion the mechanism depends on.
+
+**On individual stocks** (point-in-time S&P membership, same delisting-data
+caveat as the earlier momentum test - optimistic, more so before 2015):
+
+| config | CAGR% | MaxDD% | Sharpe | Win% | PF | Best trade | Avg win/loss |
+|---|---|---|---|---|---|---|---|
+| pure momentum, 15 positions | 5.20 | -47.48 | 0.32 | 35.2% | 1.14 | **+313.5%** | +19.4% / -8.3% |
+| SPY buy & hold | 13.99 | -33.72 | 0.83 | - | - | - | - |
+
+**The mechanism produces exactly the asymmetric shape asked for** - a 313%
+winner, average win 2.3x average loss, positive expectancy despite a 35% win
+rate. That is real, and it is what "cut losses short, let winners run" is
+supposed to look like.
+
+**It does not survive contact with drawdown.** -47.5% is worse than SPY's own
+-33.7%, and CAGR is a third of SPY's. Diagnosing the losses: 30% of losing
+trades lost more than 10% despite a 2.5-ATR stop - real overnight gaps through
+the stop (NKTR on a trial failure, MRNA's volatility, SMCI's 2024 accounting
+scandal, a semiconductor cluster in July 2026, TSLA on an earnings miss), not
+a backtest artifact.
+
+Neither obvious fix works:
+- **More diversification** (15 -> 30 positions, tighter per-name caps): barely
+  moves the needle, -43% to -48% regardless of position count. The risk is
+  systemic, not concentration - momentum-selected stocks are high-beta and
+  correlated, so a broad selloff hits most open positions at once. Diversifying
+  the *names* does not diversify that.
+- **Tighter stops** (1.5N instead of 2.5N): makes it worse (CAGR -0.7%, DD
+  -54%). Tighter stops just generate more whipsaw without the gap risk going
+  away, since gaps blow through any stop level once the move is violent enough.
+- **A portfolio-level volatility throttle** on new entries (distinct from the
+  per-position stop): best case gets drawdown to -39.6%, still worse than SPY,
+  CAGR still stuck at 3.8%. It only slows new entries; it cannot protect
+  existing positions from a fast, correlated gap.
+
+**Blending it as a small satellite next to the rotation core also fails.**
+Correlation to SPY is 0.52 - not low enough to offset how much worse its
+risk-adjusted return is. Sharpe falls monotonically at every satellite weight
+tested from 0% to 20%; there is no allocation where adding it helps.
+
+**Verdict: individual-stock trade-level trend following, built correctly with
+real cut-losses-short/let-winners-run mechanics, does not fit a 10-15%
+drawdown budget and does not beat SPY on return, in this real backtest.**
+Rejected, not shelved for later tuning - the failure mode (systemic, gap-driven
+drawdown) is not something more parameter search fixes.
+
+### Hardening what did work: cost realism and parameter robustness
+
+Robinhood is commission-free, so the 10bps round-trip cost assumed everywhere
+else may be pessimistic:
+
+| cost | CAGR% | Sharpe |
+|---|---|---|
+| 10 bps (assumed throughout) | 10.66 | 1.03 |
+| 5 bps | 10.84 | 1.05 |
+| 2 bps (near-zero, Robinhood-realistic) | 10.95 | 1.06 |
+
+Barely moves. The strategy is not fee-sensitive, so Robinhood's zero
+commission is a small tailwind, not a load-bearing assumption.
+
+Perturbing the walk-forward-chosen (9-month, top 8) by +/-2 months and +/-2
+slots:
+
+| lookback \ top_n | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|
+| 7 | 0.78 | 0.80 | 0.85 | 0.84 | 0.83 |
+| 8 | 0.92 | 0.91 | 0.94 | 0.98 | 0.99 |
+| **9** | 0.91 | 0.95 | **1.03** | 1.04 | 1.04 |
+| 10 | 0.86 | 0.99 | 0.99 | 1.01 | 1.06 |
+| 11 | 0.86 | 0.91 | 0.93 | 0.95 | 0.96 |
+
+Sharpe forms a smooth plateau (0.78-1.06) across the whole neighbourhood, no
+cliff, and (9,8) sits near the top of it rather than on an isolated spike -
+the signature of a real, broad optimum rather than curve-fitting to one cell.
+
+### Where this leaves things
+
+The rotation strategy (9-month lookback, 8 slots, 10% volatility cap) remains
+the only validated result in this project. Nothing tested today improved on
+it, and one serious attempt at literally implementing "cut losses short, let
+winners run" produced a real asymmetric payoff structure that was nonetheless
+strictly worse on every portfolio-level metric that matters. That is not a
+failure of the instruction - the payoff shape it asked for is visibly present
+in the trade statistics - it is a failure of individual-stock dispersion to
+survive being aggregated into a portfolio without correlated crash risk
+swamping it.
+
+---
+
 ## Layout
 
 ```
