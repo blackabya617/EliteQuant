@@ -9,15 +9,24 @@ from datetime import datetime, timedelta
 from strategy import get_strategy_signals
 from alerts import AlertSystem
 from config import SYMBOL
+from data_manager import DataManager
 
 
 def get_latest_data(symbol, days=200):
-    """Fetch latest OHLCV data."""
+    """Fetch latest OHLCV data with fallback."""
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
 
-    df = yf.download(symbol, start=start_date, end=end_date, progress=False)
-    return df
+    try:
+        df = yf.download(symbol, start=start_date, end=end_date, progress=False)
+        if len(df) > 0:
+            return df
+    except:
+        pass
+
+    # Fallback: use cached or synthetic data
+    data_manager = DataManager()
+    return data_manager.fetch_data(symbol, days) or data_manager.create_synthetic_data(days)
 
 
 def run_daily_scan():
@@ -30,7 +39,7 @@ def run_daily_scan():
     print(f"Fetching {SYMBOL} data...")
     df = get_latest_data(SYMBOL)
 
-    if len(df) < 200:
+    if df is None or len(df) < 200:
         print("❌ Not enough data")
         return
 
