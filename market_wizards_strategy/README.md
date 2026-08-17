@@ -782,6 +782,90 @@ looking result turned out to be a bug. Rotation (9-month lookback, 8 slots,
 
 ---
 
+## Session 6: the sizing bug that was actually there
+
+Told to check the sizing rules directly, on the theory that something in how
+positions get sized might be quietly suppressing every result. That
+instinct was right, just not in the place it would have mattered most for the
+backtest - it was in the live signal.
+
+### What was wrong
+
+`rotation.py`'s volatility-targeting exposure calculation (`_exposure()`)
+needs the strategy's *natural*, pre-exposure return series to estimate how
+volatile the strategy currently is. `backtest()` gets this right internally -
+it tracks a separate `raw_history` of unscaled returns specifically for this
+purpose. `target_weights()`, which computes the live signal that
+`papertrade.py` actually trades, instead pulled `return_pct` out of
+`backtest()`'s log - which is the *already-scaled* (post-exposure) return
+series.
+
+That is circular. If the strategy went through a genuinely volatile stretch,
+exposure gets cut - correctly. But the cut also suppresses the *recorded*
+return's volatility, since a smaller position produces a smaller move either
+way. Feeding that dampened series back into the next volatility estimate
+reads as "conditions have calmed down," so exposure gets raised again - the
+model partially undoing its own risk cut, using evidence that the cut itself
+manufactured.
+
+### What it did to the actual numbers
+
+| | using RAW history (correct) | using SCALED history (the bug) |
+|---|---|---|
+| exposure this test case | 0.5456 | 0.6710 |
+| difference | | **+12.5 percentage points too aggressive** |
+
+The live paper account had been running at **71.9% exposure when the correct
+figure was 55.2%** - carrying meaningfully more risk than the validated
+strategy actually calls for.
+
+### What it did NOT do
+
+`backtest()` was never affected - it always used the correct `raw_history`
+internally. Every performance number in this README, the entire validated
+9-month/8-slot/10%-vol-cap result, the walk-forward selection, the bootstrap
+significance test - all of it went through `backtest()`, not the buggy path,
+and none of it changes. This was a live-signal bug, not a backtest bug: the
+gap between what was validated and what was actually being traded, not a gap
+between what was validated and reality.
+
+### Fixed, and the live account corrected
+
+`backtest()`'s log now carries both `return_pct` (for the equity curve) and
+`raw_return_pct` (for anything estimating volatility). `target_weights()` now
+reads `raw_return_pct`. The live paper account was force-rebalanced the same
+day to the corrected 55.2% exposure - trimmed each of its 8 positions from 9%
+down to ~6.9%.
+
+### The same bug, found again, in a strategy already rejected
+
+`swing.py`'s portfolio-level volatility throttle has the identical pattern -
+it estimates volatility from `curve`, the actual marked equity after every
+stop, trail and prior sizing decision, rather than a raw pre-scaling series.
+Worth naming for completeness and because it is a pattern worth watching for
+elsewhere, but it doesn't change that strategy's verdict: individual-stock
+trade-level momentum was already rejected on much stronger grounds (systemic
+gap-driven drawdown that neither diversification nor this same throttle could
+fix). `engine.py` doesn't have this class of bug at all - its position sizing
+uses same-day equity for same-day decisions, with no retrospective volatility
+window to be circular about.
+
+### Deployment audit, same session
+
+Fixing a real gap between "validated" and "actually trading" prompted a
+closer look at the rest of the deployment path, which had its own drift:
+`main.py track` was reading `tracker.py`'s state - a leftover from an earlier
+Alpaca-based design that nothing has written to since `papertrade.py` (the
+broker-free live path) replaced it. Running `track` would have silently
+reported stale or empty history while the real account kept moving. Fixed to
+read `papertrade.py`'s state, which is what the scheduled GitHub Actions
+workflow actually updates. `SETUP.md` was rewritten to lead with the
+broker-free path as primary - it previously documented Alpaca API keys as
+the main setup, which stopped being true the session `papertrade.py` was
+built, several sessions ago.
+
+---
+
 ## Layout
 
 ```

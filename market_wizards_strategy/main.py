@@ -2,13 +2,24 @@
 """
 Daily driver.
 
-  python main.py signal     what the portfolio should hold right now
-  python main.py paper      reconcile the Alpaca paper account against it
+  python main.py run        THE LIVE PATH. Broker-free paper trading: price
+                             the book, rebalance if the signal changed, record
+                             a daily mark. No keys. This is what the scheduled
+                             GitHub Actions workflow calls every weekday, and
+                             what forward-performance numbers come from.
+  python main.py signal     what the portfolio should hold right now, without
+                             touching the paper account
   python main.py backtest   re-run the validation table from real data
+  python main.py track      forward performance of the live paper account
+                             since it started, vs SPY over the same window
+  python main.py paper      OPTIONAL alternate path: reconcile a real Alpaca
+                             paper account instead of the built-in simulated
+                             one. Needs API keys (see SETUP.md). Not the path
+                             anything is actually running on - `run` is.
 
 The rotation rebalances monthly, so `signal` is informative every day but only
-changes at month end. `paper` is safe to run daily: it computes the drift and
-does nothing when the account already matches.
+changes at month end. `run` is safe to call daily: it no-ops when the account
+already matches the target.
 """
 
 import json
@@ -147,8 +158,14 @@ def cmd_run():
 
 
 def cmd_track():
-    """Show real forward performance since paper trading began."""
-    rep = tracker.report()
+    """Show real forward performance of the live (broker-free) paper account.
+
+    Reads papertrade.py's state, not tracker.py's - tracker.py only gets
+    written to by the optional Alpaca path (`paper`), which is not what the
+    scheduled workflow runs. Pointing this at the wrong state would silently
+    report stale or empty history while the real account kept moving.
+    """
+    rep = papertrade.report()
     print("\nForward performance (not a backtest - this is what actually happened)")
     print("=" * 62)
     for k, v in rep.items():

@@ -97,7 +97,19 @@ def _exposure(history, p: RotationParams):
 
 
 def backtest(monthly, p: RotationParams, start_idx=None):
-    """Equal-weight monthly rotation. Returns (equity, holdings log)."""
+    """Equal-weight monthly rotation. Returns (equity, holdings log).
+
+    The log's `return_pct` is the realised (post-exposure) return, since that
+    is what an equity curve needs. `raw_return_pct` carries the pre-exposure
+    return specifically so any downstream vol-targeting decision - including
+    the live signal in target_weights() - measures the strategy's natural
+    volatility rather than a series already damped by a previous exposure cut.
+    Feeding the damped series back into the vol estimate is a circularity
+    bug: a genuinely volatile stretch gets exposure cut, the cut suppresses
+    the recorded return's volatility, and the suppressed volatility then
+    reads as calm enough to raise exposure again - the sizing model
+    unwinding its own risk cut.
+    """
     warmup = max(p.lookback_months, p.abs_ma_months) + 1
     start_idx = start_idx or warmup
 
@@ -120,12 +132,13 @@ def backtest(monthly, p: RotationParams, start_idx=None):
 
         exposure = _exposure(raw_history, p)
         raw_history.append(step)
-        step *= exposure
+        scaled_step = step * exposure
 
-        equity.append(equity[-1] * (1 + step))
+        equity.append(equity[-1] * (1 + scaled_step))
         dates.append(monthly.index[i])
         log.append({"date": monthly.index[i], "holdings": ",".join(picks) or "CASH",
-                    "return_pct": step * 100, "exposure": exposure})
+                    "return_pct": scaled_step * 100, "raw_return_pct": step * 100,
+                    "exposure": exposure})
         held = current
 
     return pd.Series(equity, index=dates), pd.DataFrame(log)
@@ -162,7 +175,10 @@ def target_weights(p: RotationParams = None, universe=None):
     if p.vol_cap:
         _, log = backtest(monthly, p)
         if len(log) >= p.vol_lookback:
-            recent = (log["return_pct"] / 100).tolist()
+            # raw_return_pct, not return_pct: the vol estimate must see the
+            # strategy's natural (pre-exposure) return series, matching what
+            # backtest() uses internally - see the note on backtest().
+            recent = (log["raw_return_pct"] / 100).tolist()
             exposure = _exposure(recent, p)
 
     weight = (1.0 / p.top_n) * exposure if p.top_n else 0.0

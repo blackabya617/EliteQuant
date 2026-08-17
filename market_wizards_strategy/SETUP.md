@@ -1,102 +1,70 @@
-# Paper trading setup
+# Running this
 
-Three steps, about five minutes. Everything else is already wired.
+## The live path (already running, no setup needed)
 
-## 1. Free Alpaca paper account
+The rotation strategy is paper trading right now, broker-free: no API keys,
+no account, nothing that can leak. A GitHub Actions workflow
+(`.github/workflows/paper-trade.yml`) runs `python main.py run` every weekday
+after the close, prices the simulated book against real closes, rebalances if
+the signal changed, and commits the result to `paper_state.json` so the
+record is auditable in the repo's own history.
 
-Sign up at <https://app.alpaca.markets/signup> — no funding, no card. Once in,
-switch to **Paper Trading** (toggle, top-left) and generate an API key pair from
-the dashboard. You get a Key ID and a Secret Key; the secret is shown once.
-
-## 2. Add the keys
+To check on it yourself:
 
 ```bash
 cd market_wizards_strategy
-cp .env.example .env
+pip install -r requirements.txt
+
+python main.py run       # price the book, rebalance if needed, record a mark
+python main.py track     # forward performance vs SPY since day one
+python main.py signal    # what the strategy wants to hold right now
+python main.py backtest  # re-run the validated 2008-2026 table
 ```
 
-Edit `.env`:
+`run` is idempotent - safe to call as often as you like, it only acts when
+something has actually changed. It's also what you'd run locally if you
+wanted a mark between scheduled workflow runs, or if you moved the schedule
+to your own machine instead of GitHub's.
 
-```
-ALPACA_API_KEY=PK...
-ALPACA_API_SECRET=...
-EXECUTE_PAPER_TRADES=false
-```
+## Optional: a real Alpaca paper account instead
 
-Leave `EXECUTE_PAPER_TRADES=false` for the first run.
+`main.py paper` and `paper_broker.py` exist as an alternative if you want
+actual simulated *broker* fills (order acknowledgements, a real account
+dashboard) rather than the self-contained simulation `run` uses. This is not
+what's currently deployed - `run` is - so treat this section as "how to switch
+to it," not "how it currently works."
 
-## 3. Dry run, then arm it
+1. Sign up free at <https://app.alpaca.markets/signup>, no funding needed.
+   Switch to **Paper Trading** and generate an API key pair.
+2. `cp .env.example .env`, then add `ALPACA_API_KEY` / `ALPACA_API_SECRET`.
+   Leave `EXECUTE_PAPER_TRADES=false` for the first run.
+3. `python main.py paper` prints the orders it would send and stops. If the
+   target looks right, set `EXECUTE_PAPER_TRADES=true` and run again to place
+   them for real (in the paper account - no real money is ever at risk here).
 
-```bash
-python main.py paper
-```
+### Where the keys would live
 
-This prints the orders it *would* send and stops. If the list looks right
-(five ETFs at 20% each), set `EXECUTE_PAPER_TRADES=true` and run it again to
-actually place them.
+Never paste an API key into a chat, an issue, or a commit - including to an
+assistant. If you ever do by accident, rotate it immediately from the Alpaca
+dashboard; regenerating takes seconds and instantly invalidates the old pair.
 
-## Where the keys live
+Locally, `.env` is enough and the keys never leave your machine. To run this
+path on a schedule without your machine being on, GitHub's encrypted repo
+secrets (Settings -> Secrets and variables -> Actions) work the same way -
+store `ALPACA_API_KEY` and `ALPACA_API_SECRET` there, never in a workflow file
+or the repo itself. Note EliteQuant is a public repo, so even with secrets
+masked, switching to this path makes the fact that you're running it (though
+not the keys) visible in public Actions logs.
 
-The keys never need to be shared with anyone, including an assistant. Pick one:
+## What to expect
 
-**A. Your own machine.** Put them in `.env` as above and run it locally. The
-keys never leave your computer. Simplest and safest.
+Based on the 2008-2026 backtest: roughly SPY's return with roughly half its
+drawdown, pretax. Read the README before trusting any of this for real money -
+in particular, the after-tax analysis there found the strategy currently
+*loses* to plain buy-and-hold in a taxable account, because of how often it
+rebalances.
 
-**B. GitHub Actions** (`.github/workflows/paper-trade.yml`, already committed).
-Runs after the close on weekdays without your machine being on. Set the keys
-once:
-
-> repo -> Settings -> Secrets and variables -> Actions -> New repository secret
->   `ALPACA_API_KEY`
->   `ALPACA_API_SECRET`
-
-GitHub encrypts them, masks them in logs, and does not expose them to pull
-requests from forks. Scheduled runs stay in dry run until you add a repository
-*variable* `EXECUTE_PAPER_TRADES` set to `true`, or tick the box on a manual
-"Run workflow".
-
-One caution: **EliteQuant is a public repo**, so the workflow's logs are
-world-readable. The secrets themselves stay masked and the account number is
-truncated, but if that bothers you, move this code to a private repo before
-arming it.
-
-Never paste API keys into a chat window, an issue, or a commit. If you ever do
-by accident, rotate them immediately from the Alpaca dashboard — regenerating
-takes seconds and instantly invalidates the old pair.
-
-## Running it on a schedule
-
-The rotation rebalances monthly, so the meaningful run is the first trading day
-of each month. Running daily is harmless — it no-ops when the account already
-matches within 2%, and it records an equity observation for forward tracking.
-
-```bash
-crontab -e
-# weekdays at 16:15 ET, after the close
-15 16 * * 1-5 cd /path/to/market_wizards_strategy && /usr/bin/python3 main.py paper >> ~/mw.log 2>&1
-```
-
-## Checking how it is actually doing
-
-```bash
-python main.py track
-```
-
-This compares the paper account against SPY over the identical window, starting
-the day you began. It is the only evidence in this project that was not
-selected with hindsight — every table in the README is a backtest chosen after
-seeing the data.
-
-Expect it to prove nothing for a long while. The rotation turns over about
-twelve times a year, so even a full year is a small sample. Do not conclude
-anything from the first few months in either direction.
-
-## What you should expect
-
-Based on 2008-2026 backtests, roughly SPY's return with roughly half the
-drawdown. Concretely: when SPY next falls 40%, this should fall about 20%. In a
-straight-up year it will probably lag SPY somewhat.
-
-If it starts consistently *beating* SPY by a wide margin, be suspicious rather
-than pleased — that is not what the backtest predicts, and it more likely means
-something is wrong with the implementation than that we found free money.
+If the live numbers start beating SPY by a wide margin, be suspicious rather
+than pleased - that isn't what the backtest predicts, and it's more likely a
+bug than a discovery. (This project has found several of exactly that kind of
+bug already; see the README's running list.)
