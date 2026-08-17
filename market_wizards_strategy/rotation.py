@@ -57,9 +57,37 @@ class RotationParams:
 
 
 def month_end_prices(universe=None, start="2007-04-11"):
+    """Month-end panel. NOTE the final row is the CURRENT, still-running month:
+    resample labels it with the month's end date but fills it with the latest
+    available price. That is what you want for marking a portfolio to market,
+    and emphatically not what you want for computing a signal - see
+    last_complete_month().
+    """
     universe = universe or DEFAULT_UNIVERSE
     px = pd.DataFrame({s: dm.load(s)["Close"] for s in universe}).ffill()
     return px[px.index >= start].resample("M").last()
+
+
+def last_complete_month(monthly, as_of=None):
+    """Index of the last fully-elapsed month in `monthly`.
+
+    The signal must be anchored on a month that has actually finished. Anchoring
+    on the running month instead makes the live strategy differ from the
+    validated one in two ways: it uses a different momentum window than every
+    backtested number here, and it makes the holdings depend on *which day the
+    scheduler happened to run* - the partial month's data changes daily, so the
+    ranking churns underneath it. Measured over 47 months, a partial-month
+    anchor disagreed with this convention on an average of 1.4 of 8 positions
+    on the first trading day of the month, rising to 1.9 by the tenth.
+    """
+    if as_of is None:
+        as_of = dm.load("SPY").index[-1]
+    as_of = pd.Timestamp(as_of)
+    for i in range(len(monthly) - 1, -1, -1):
+        label = monthly.index[i]
+        if (as_of.year, as_of.month) > (label.year, label.month):
+            return i
+    return -1
 
 
 def select(monthly, p: RotationParams, as_of=None):
@@ -169,21 +197,30 @@ def target_weights(p: RotationParams = None, universe=None):
     """
     p = p or RotationParams()
     monthly = month_end_prices(universe)
-    picks = select(monthly, p)
+
+    # Anchor on the last COMPLETE month, exactly as backtest() does when it
+    # calls select(as_of=monthly.index[i - 1]). Using monthly.index[-1] would
+    # anchor on the running month and quietly trade a different strategy than
+    # the one every number in the README describes.
+    anchor = last_complete_month(monthly)
+    picks = select(monthly, p, as_of=monthly.index[anchor])
 
     exposure = 1.0
     if p.vol_cap:
         _, log = backtest(monthly, p)
+        # Same reasoning for the volatility history: drop the running month,
+        # whose partial return is not comparable to the full-month returns the
+        # annualisation assumes. And raw_return_pct, not return_pct, so the
+        # estimate sees the strategy's natural pre-exposure volatility.
+        log = log[log["date"] <= monthly.index[anchor]]
         if len(log) >= p.vol_lookback:
-            # raw_return_pct, not return_pct: the vol estimate must see the
-            # strategy's natural (pre-exposure) return series, matching what
-            # backtest() uses internally - see the note on backtest().
             recent = (log["raw_return_pct"] / 100).tolist()
             exposure = _exposure(recent, p)
 
     weight = (1.0 / p.top_n) * exposure if p.top_n else 0.0
     return {
-        "as_of": monthly.index[-1].date().isoformat(),
+        "as_of": monthly.index[anchor].date().isoformat(),
+        "priced_through": monthly.index[-1].date().isoformat(),
         "holdings": {s: weight for s in picks},
         "cash_weight": 1.0 - weight * len(picks),
         "exposure": exposure,

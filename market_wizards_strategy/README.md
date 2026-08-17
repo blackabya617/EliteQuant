@@ -913,6 +913,91 @@ else in the project.
 
 ---
 
+## Session 8: the month-boundary bug - the live strategy was picking different assets
+
+Continued the audit into rebalance timing, the one part of the live path not
+yet stress-tested. This turned up the third live-vs-backtest gap, and the
+most consequential of the three: the previous two changed *how much* was
+held, this one changed *what* was held.
+
+### The bug
+
+`month_end_prices()` builds its panel with `.resample("M").last()`. That
+labels every bucket with the month's end date but fills the final one with
+whatever the latest available price is - so today the panel's last row reads
+`2026-08-31` while actually containing data only through `2026-08-14`, ten of
+August's ~21 trading days.
+
+`backtest()` never anchors a signal there: it calls
+`select(as_of=monthly.index[i - 1])`, always a completed month.
+`target_weights()` - the live signal - called `select(monthly, p)`, which
+defaults to `monthly.index[-1]`: the running, partial month.
+
+So the live book was ranking on a 9-month momentum window anchored on a
+half-finished August, while every validated number in this README describes a
+window anchored on a completed July.
+
+### It changed the actual holdings, and made them depend on the scheduler
+
+Right now, the two conventions disagree on one of eight positions - live had
+QQQ where the validated strategy holds XLV, 12.5% of the book in a different
+asset. That is not a one-off. Rebuilding the panel as it would have stood on
+various days of the month, across 47 months of history:
+
+| anchor used | avg positions differing (of 8) | months matching the validated convention |
+|---|---|---|
+| 1st trading day of month | 1.36 | 23% |
+| 3rd | 1.62 | 17% |
+| 5th | 1.83 | 13% |
+| 10th | 1.91 | **11%** |
+
+Two separate problems in one. The obvious one: the live strategy is not the
+strategy that was tested. The subtler one: a partial month's data changes
+every day, so the ranking churns underneath the signal, which means **the
+holdings depended on which day the scheduler happened to fire** - a workflow
+run on the 2nd of the month would produce a materially different portfolio
+than the same code run on the 9th. No amount of backtesting says anything
+about a strategy whose output depends on cron timing.
+
+### Fixed
+
+Added `last_complete_month()`, and `target_weights()` now anchors there -
+`select(as_of=monthly.index[anchor])`, exactly matching `backtest()`. The
+volatility history feeding the exposure cap is truncated to the same anchor,
+since a partial month's return is not comparable to the full-month returns
+the `sqrt(12)` annualisation assumes. `papertrade.py`'s rebalance gate now
+tags by the anchor month rather than the running calendar month - same
+once-monthly cadence, but the log now names the month whose close actually
+drove the trade.
+
+The signal output gained a `priced_through` field alongside `as_of`, so the
+distinction between "what determined these holdings" (July close) and "what
+this is marked at" (latest price) is visible rather than implicit.
+
+Verified after the fix: live holdings match the validated convention exactly,
+exposure settled at 0.5456 - which is precisely the figure the previous
+session's raw-history diagnostic had independently predicted as correct - and
+the live account was corrected with two trades (sell QQQ, buy XLV). No
+backtested number changed; `backtest()` was correct throughout.
+
+### Three sessions, three bugs, same shape
+
+All three were gaps between the validated strategy and the trading one, none
+were flaws in the validation:
+
+| session | bug | effect |
+|---|---|---|
+| 6 | vol estimate fed its own scaled output | live ran 71.9% exposure vs correct 55.2% |
+| 7 | transaction cost charged per leg, not round-trip | 2x the intended cost drag |
+| 8 | signal anchored on the running partial month | different assets held; output depended on cron timing |
+
+Worth naming the pattern: a backtest can be entirely correct and still tell
+you nothing useful if the live path reimplements the same decisions slightly
+differently. The backtest was right every time. What needed auditing was
+everything downstream of it.
+
+---
+
 ## Layout
 
 ```

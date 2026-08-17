@@ -28,8 +28,7 @@ import numpy as np
 import pandas as pd
 
 import data_manager as dm
-from rotation import (DEFAULT_UNIVERSE, RotationParams, month_end_prices, select,
-                      target_weights)
+from rotation import DEFAULT_UNIVERSE, RotationParams, target_weights
 
 STATE_FILE = "paper_state.json"
 COST_BPS = 10.0  # round-trip; each leg below charges half of this
@@ -164,7 +163,6 @@ def step(directory=None, capital=10_000.0, force_rebalance=False):
     # Use target_weights so the live book carries the same volatility cap the
     # backtest applies. Deriving weights as 1/top_n here would silently run the
     # account at full exposure while the tested strategy runs de-risked.
-    monthly = month_end_prices()
     params = RotationParams()
     signal = target_weights(params)
     target = signal["holdings"]
@@ -174,9 +172,13 @@ def step(directory=None, capital=10_000.0, force_rebalance=False):
     if not prices:
         raise RuntimeError("No prices available; cannot mark the book.")
 
-    # Rebalance when the signal month differs from the last one acted on.
+    # Gate on the signal's ANCHOR month (the last completed month), not the
+    # running calendar month. Same once-a-month cadence either way, but the
+    # tag now names the month whose close actually determined these holdings,
+    # so the rebalance log says what drove the trade rather than merely when
+    # it happened.
     last = state["rebalances"][-1]["note"] if state["rebalances"] else None
-    signal_month = str(monthly.index[-1].date())[:7]
+    signal_month = signal["as_of"][:7]
     should = force_rebalance or (last != signal_month)
 
     actions = rebalance(state, target, prices, note=signal_month) if should else []
