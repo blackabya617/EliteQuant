@@ -83,13 +83,29 @@ def equity(state, prices):
 def rebalance(state, target_weights, prices, note=""):
     """Move the book to `target_weights`. Fractional shares, cost on every trade.
 
-    target_weights() guarantees weights never sum above 1.0 (exposure is
-    capped there), so cash going negative here should never happen in normal
-    operation. It's asserted anyway: this is the one place real money would
-    move, and a silent implicit-margin state from some future bug upstream -
-    a bad top_n, a duplicate symbol, anything that made the weights not sum
-    to <=1 - is a much worse failure mode than a loud crash here.
+    Two distinct failure modes are handled separately here, because they mean
+    different things:
+
+    A target whose weights sum above 1.0 is a bug upstream - a bad top_n, a
+    duplicate symbol, an exposure cap that stopped capping. That is refused
+    loudly, because silently trading into implicit margin is far worse than a
+    crash.
+
+    A target that sums to exactly 1.0 is legitimate but still cannot be filled
+    at face value: selling $10,000 of one holding yields slightly less than
+    $10,000 after costs, while the replacement buy is sized against pre-cost
+    equity. The shortfall is precisely the transaction cost. Buys are
+    therefore clamped to cash actually on hand. Without this the strategy
+    would refuse to trade - and so halt - on any month the volatility cap
+    allowed full exposure.
     """
+    weight_sum = sum(target_weights.values())
+    if weight_sum > 1.0 + 1e-9:
+        raise RuntimeError(
+            f"target weights sum to {weight_sum:.4f} (> 1.0), which implies "
+            f"margin. Refusing to trade - fix the signal upstream."
+        )
+
     total = equity(state, prices)
     actions = []
 
@@ -110,16 +126,19 @@ def rebalance(state, target_weights, prices, note=""):
         drift = target_value - current_value
         if abs(drift) < total * 0.01:      # ignore sub-1% drift, as a broker would
             continue
+        if drift > 0:
+            # Never spend more than is actually on hand, cost included. The
+            # gap is normally just the round-trip cost on a fully-invested
+            # target; the weight-sum check above has already ruled out the
+            # pathological case.
+            affordable = state["cash"] / (1 + COST_BPS / 2 / 10_000)
+            drift = min(drift, max(affordable, 0.0))
+            if drift <= 0:
+                continue
+
         qty_delta = drift / prices[symbol]
         cost = abs(drift) * COST_BPS / 2 / 10_000
-        new_cash = state["cash"] - drift - cost
-        if new_cash < -1e-6:
-            raise RuntimeError(
-                f"rebalance would take cash negative (${new_cash:,.2f}) buying "
-                f"{symbol} - target_weights summed to more than available "
-                f"equity. Refusing to trade rather than implicitly margin."
-            )
-        state["cash"] = new_cash
+        state["cash"] -= drift + cost
         new_qty = current_qty + qty_delta
         if new_qty <= 1e-9:
             state["shares"].pop(symbol, None)

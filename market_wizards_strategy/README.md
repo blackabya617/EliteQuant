@@ -998,6 +998,52 @@ everything downstream of it.
 
 ---
 
+## Session 8b: pinning the invariants, and one more latent bug they caught
+
+Three bugs of the same shape, found one per session by hand, is a pattern
+rather than bad luck. `test_invariants.py` converts each into an executable
+assertion, so a fourth divergence fails loudly instead of waiting to be
+noticed:
+
+| invariant | the bug it pins |
+|---|---|
+| live holdings == backtest-convention holdings | session 8's partial-month anchor |
+| backtest log exposes an unscaled return series, and `scaled == raw x exposure` | session 6's circular vol estimate |
+| a full round-trip costs `COST_BPS`, not 2x | session 7's per-leg cost |
+| target weights sum to <= 1.0, cash weight agrees | general safety |
+| a malformed target is refused rather than margined | the guard added in session 7 |
+| `select()` ignores data after its `as_of` | lookahead, the original sin of this project |
+| a second same-day step places no trades | idempotency, since CI runs daily |
+
+The suite is dependency-free (no pytest here), never touches the real
+`paper_state.json`, and now runs as a **gate before the trade** in the
+scheduled workflow. Skipping a day's rebalance is strictly better than
+trading a strategy nobody has tested.
+
+### Writing the tests immediately found a fourth bug
+
+The round-trip cost test - a plain 100%-invested swap of one holding for
+another - crashed on the margin guard. That was not a bad test. Selling
+$10,000 of a holding returns $9,995 after costs, while the replacement buy is
+still sized against the *pre-cost* $10,000 of equity. The shortfall is exactly
+the transaction cost, so **any fully-invested target was unfillable**, and the
+guard would have refused to trade at all.
+
+It had never fired in production only because the volatility cap has kept
+exposure near 55%. Any month calm enough to allow 100% exposure - or simply
+running with `vol_cap=None` - would have halted the strategy outright.
+
+Fixed by separating the two cases that the single guard had conflated. A
+target summing above 1.0 is a genuine upstream bug and is still refused
+loudly. A target summing to exactly 1.0 is legitimate, and its buys are now
+clamped to cash actually on hand, absorbing the cost shortfall. Both
+behaviours are pinned by tests.
+
+That is four bugs from four consecutive audits, every one of them downstream
+of a backtest that was correct the entire time.
+
+---
+
 ## Layout
 
 ```

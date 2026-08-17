@@ -28,6 +28,14 @@ jobs:
         working-directory: market_wizards_strategy
         run: pip install -q -r requirements.txt
 
+      # Gate the trade on the live-vs-backtest invariants. Three separate bugs
+      # in this project were the live path quietly diverging from the validated
+      # strategy; better to skip a day's rebalance than to trade a strategy
+      # nobody has tested.
+      - name: Check invariants
+        working-directory: market_wizards_strategy
+        run: python test_invariants.py
+
       - name: Step the paper account
         working-directory: market_wizards_strategy
         run: python main.py run
