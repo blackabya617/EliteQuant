@@ -1044,6 +1044,67 @@ of a backtest that was correct the entire time.
 
 ---
 
+## Session 9: the data layer could corrupt the forward record
+
+The forward paper record is the only evidence in this project that was not
+selected with hindsight, and it is committed to git daily - which makes a
+wrong observation worse than a missing one, because it persists and gets
+believed. Audited the data path on that basis.
+
+### A single failed download would post a phantom loss
+
+`_latest_prices()` collects prices per symbol and swallows failures.
+`equity()` then summed `qty * price` **only over symbols present in that
+dict** - so any held position that failed to download was valued at exactly
+zero:
+
+```
+holdings: 50 shares of A @ $100, 50 shares of B @ $100
+equity, all prices present : $10,000
+equity, B failed to price  : $5,000
+```
+
+A transient network blip on one ETF would have written a 50% loss into the
+permanent record, indistinguishable from a real one. Nothing would have
+raised, and the workflow would have committed it and moved on.
+
+### Staleness could hide behind fresh symbols
+
+`_latest_prices()` returned a single `asof` computed as the **max** across
+symbols, and `step()` only checked whether the price dict was entirely empty.
+So one symbol stuck days or weeks behind - a delisting, a broken feed,
+`data_manager.load()` silently falling back to an old cache after a failed
+download - would be marked at its stale price while the summary date looked
+current, because some other symbol was fresh.
+
+### Fixed
+
+`equity()` is now strict by default and refuses to mark a book containing an
+unpriceable position. `_latest_prices()` returns per-symbol dates rather than
+a max. A new `_check_data_health()` runs before anything is recorded and
+rejects three distinct conditions: a held position with no price, a *target*
+position with no price (trading anyway would silently under-invest), and any
+relevant symbol staler than six calendar days (enough slack for a long
+weekend plus a holiday). `price_asof` in the record now reports the **oldest**
+priced leg rather than the newest, so the stored mark describes how current it
+genuinely is.
+
+The principle throughout: a missed day's observation is recoverable, a wrong
+one committed to the record is not. Every one of these now fails loudly and
+skips the day rather than writing a confident wrong number.
+
+`data_manager.load()` still falls back to a stale cache when a download
+fails, which is reasonable behaviour on its own - and is now caught
+downstream by the staleness check rather than passing through unnoticed.
+
+### Suite now at 17 assertions
+
+The invariant tests grew to cover all of the above, and still gate the trade
+in CI. Five bugs found across five consecutive audits, every one of them
+downstream of a backtest that was correct throughout.
+
+---
+
 ## Layout
 
 ```

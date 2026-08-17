@@ -63,21 +63,74 @@ def save(state, directory=None):
         json.dump(state, fh, indent=2)
 
 
+MAX_PRICE_STALENESS_DAYS = 6   # covers a long weekend plus a holiday
+
+
 def _latest_prices(symbols):
-    prices, asof = {}, None
+    """Latest close per symbol, plus each symbol's own as-of date.
+
+    Returns per-symbol dates rather than a single max: a max hides a stale
+    symbol behind fresh ones, which is precisely the case worth catching.
+    """
+    prices, asof = {}, {}
     for s in symbols:
         try:
             close = dm.load(s)["Close"]
             prices[s] = float(close.iloc[-1])
-            asof = close.index[-1] if asof is None else max(asof, close.index[-1])
-        except Exception:  # noqa: BLE001 - a missing symbol must not stop the run
+            asof[s] = close.index[-1]
+        except Exception:  # noqa: BLE001 - collected and reported by the caller
             continue
     return prices, asof
 
 
-def equity(state, prices):
+def equity(state, prices, strict=True):
+    """Mark the book to `prices`.
+
+    Strict by default, because the lenient version is a trap: summing only the
+    holdings that happen to be present in `prices` values any unpriceable
+    position at exactly zero. A single failed download would post a phantom
+    loss the size of that position into a forward record that gets committed
+    to git and never revisited. Refusing to produce a number is much better
+    than producing a confidently wrong one.
+    """
+    missing = [s for s in state["shares"] if s not in prices]
+    if missing and strict:
+        raise RuntimeError(
+            f"cannot price held position(s) {sorted(missing)} - refusing to "
+            f"mark the book rather than value them at zero."
+        )
     held = sum(qty * prices[s] for s, qty in state["shares"].items() if s in prices)
     return state["cash"] + held
+
+
+def _check_data_health(state, target, prices, asof, now=None):
+    """Refuse to trade or mark on missing or stale data.
+
+    A missed day's observation is recoverable. A wrong one, committed to the
+    permanent record, quietly corrupts the only evidence in this project that
+    was not selected with hindsight.
+    """
+    now = pd.Timestamp(now or datetime.now(timezone.utc).date())
+
+    unpriced_holdings = [s for s in state["shares"] if s not in prices]
+    if unpriced_holdings:
+        raise RuntimeError(f"held position(s) with no price: {sorted(unpriced_holdings)}")
+
+    unpriced_targets = [s for s in target if s not in prices]
+    if unpriced_targets:
+        raise RuntimeError(
+            f"target position(s) with no price: {sorted(unpriced_targets)} - "
+            f"trading anyway would silently under-invest."
+        )
+
+    relevant = set(state["shares"]) | set(target) | {"SPY"}
+    stale = {s: asof[s].date() for s in relevant
+             if s in asof and (now - asof[s]).days > MAX_PRICE_STALENESS_DAYS}
+    if stale:
+        raise RuntimeError(
+            f"price data stale by more than {MAX_PRICE_STALENESS_DAYS} days: "
+            f"{stale} (today {now.date()})"
+        )
 
 
 def rebalance(state, target_weights, prices, note=""):
@@ -159,12 +212,21 @@ def rebalance(state, target_weights, prices, note=""):
 
 
 def mark(state, prices, spy_price, asof):
-    """Record one daily observation. Idempotent per date."""
+    """Record one daily observation. Idempotent per date.
+
+    `asof` is a {symbol: date} map; the recorded `price_asof` is the OLDEST
+    date among the priced symbols, not the newest. The oldest is the honest
+    description of how current the mark actually is - a newest-date summary
+    would read as fresh even when one leg of the book was days behind.
+    """
     today = datetime.now(timezone.utc).date().isoformat()
+    relevant = [asof[s] for s in set(state["shares"]) | {"SPY"} if s in asof]
+    price_asof = min(relevant).date().isoformat() if relevant else None
+
     state["history"] = [h for h in state["history"] if h["date"] != today]
     state["history"].append({
         "date": today,
-        "price_asof": str(asof.date()) if asof is not None else None,
+        "price_asof": price_asof,
         "equity": equity(state, prices),
         "spy": spy_price,
         "holdings": {s: round(q, 6) for s, q in state["shares"].items()},
@@ -190,6 +252,7 @@ def step(directory=None, capital=10_000.0, force_rebalance=False):
     prices, asof = _latest_prices(symbols)
     if not prices:
         raise RuntimeError("No prices available; cannot mark the book.")
+    _check_data_health(state, target, prices, asof)
 
     # Gate on the signal's ANCHOR month (the last completed month), not the
     # running calendar month. Same once-a-month cadence either way, but the

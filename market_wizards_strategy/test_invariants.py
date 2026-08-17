@@ -161,6 +161,78 @@ def test_step_is_idempotent():
               f"second run produced {len(second)} actions")
 
 
+# ---------------------------------------------------------------------------
+# 4. bad data must never be recorded as a real observation
+# ---------------------------------------------------------------------------
+
+def test_unpriceable_holding_is_not_valued_at_zero():
+    """A held position whose price is missing must not silently become $0.
+
+    The lenient sum - only counting symbols present in `prices` - posts a
+    phantom loss the size of the position into a forward record that is
+    committed to git and never revisited.
+    """
+    state = papertrade.new_account(10_000.0)
+    state["cash"] = 0.0
+    state["shares"] = {"A": 50.0, "B": 50.0}
+
+    try:
+        papertrade.equity(state, {"A": 100.0})   # B unpriceable
+        check("equity() refuses to value an unpriceable holding at zero", False,
+              "returned a number instead of raising")
+    except RuntimeError:
+        check("equity() refuses to value an unpriceable holding at zero", True)
+
+    ok = papertrade.equity(state, {"A": 100.0, "B": 100.0})
+    check("equity() still marks correctly when all prices are present",
+          abs(ok - 10_000.0) < 1e-9, f"got {ok}")
+
+
+def test_health_check_rejects_missing_and_stale_data():
+    today = pd.Timestamp("2026-08-17")
+    fresh = pd.Timestamp("2026-08-14")
+    state = papertrade.new_account(10_000.0)
+    state["shares"] = {"A": 1.0}
+    target = {"A": 0.5, "B": 0.5}
+
+    prices = {"A": 100.0, "B": 100.0, "SPY": 500.0}
+    asof = {"A": fresh, "B": fresh, "SPY": fresh}
+
+    try:
+        papertrade._check_data_health(state, target, prices, asof, now=today)
+        check("healthy data passes the check", True)
+    except RuntimeError as exc:
+        check("healthy data passes the check", False, str(exc))
+
+    try:
+        papertrade._check_data_health(state, target, {"A": 100.0, "SPY": 500.0},
+                                      {"A": fresh, "SPY": fresh}, now=today)
+        check("unpriceable target symbol is rejected", False, "no exception")
+    except RuntimeError:
+        check("unpriceable target symbol is rejected", True)
+
+    stale = dict(asof, B=pd.Timestamp("2026-07-01"))
+    try:
+        papertrade._check_data_health(state, target, prices, stale, now=today)
+        check("stale price data is rejected", False, "no exception")
+    except RuntimeError:
+        check("stale price data is rejected", True)
+
+
+def test_price_asof_reports_the_oldest_leg():
+    """`price_asof` must describe the least-current leg, not the most."""
+    state = papertrade.new_account(10_000.0)
+    state["cash"] = 0.0
+    state["shares"] = {"A": 10.0}
+    prices = {"A": 100.0, "SPY": 500.0}
+    asof = {"A": pd.Timestamp("2026-08-10"), "SPY": pd.Timestamp("2026-08-14")}
+
+    papertrade.mark(state, prices, prices["SPY"], asof)
+    recorded = state["history"][-1]["price_asof"]
+    check("price_asof is the oldest priced leg, not the newest",
+          recorded == "2026-08-10", f"recorded {recorded}")
+
+
 if __name__ == "__main__":
     print("\nLive-vs-backtest invariants\n" + "=" * 60)
     for fn in [
@@ -171,6 +243,9 @@ if __name__ == "__main__":
         test_rebalance_refuses_to_margin,
         test_no_lookahead_in_select,
         test_step_is_idempotent,
+        test_unpriceable_holding_is_not_valued_at_zero,
+        test_health_check_rejects_missing_and_stale_data,
+        test_price_asof_reports_the_oldest_leg,
     ]:
         print(f"\n{fn.__name__}:")
         fn()
