@@ -688,6 +688,100 @@ remains untested for a data-access reason, not because the idea failed.
 
 ---
 
+## Session 5: chasing PEAD harder - a real bug, caught before it was reported
+
+Told to keep digging, the clearest remaining thread was PEAD tested properly:
+a broad, mid-cap-tilted universe instead of 4 mega-caps, since the literature
+says the effect is strongest in less-covered names. Nasdaq's public
+earnings-surprise endpoint (unkeyed, no visible rate limit, unlike Alpha
+Vantage's 25/day cap) made this possible: 402 companies, 1,600 quarterly
+events, deliberately excluding the top 15% by liquidity to bias toward where
+PEAD theory predicts a real effect.
+
+### The exciting number, and why it was wrong
+
+A long-only rolling basket - hold anything that reported a >=5% earnings beat
+within the last 60 trading days, equal weight, daily rebalance - produced:
+
+**34.9% CAGR, -7.0% max drawdown, Sharpe 2.32** against SPY's 23.0%/-8.9%/1.67
+over the same window, survived a 10bps-cost check, and had beta 0.71 to SPY -
+better return with less market exposure. The single best number in this
+entire project. It was also wrong, and the process of finding out why is
+worth recording in full because it is the same mistake in different clothes
+as the position-sizing and lookahead bugs found earlier.
+
+**The control that should have been run first, and was:** holding the entire
+402-stock universe, equal-weighted, with zero earnings conditioning, produced
+21.1% CAGR / Sharpe 1.62 - essentially identical to SPY. That ruled out "the
+universe itself is just a hot basket" and made the earnings-conditioned
+result look genuinely earnings-driven, not a selection artifact. It was the
+wrong control to stop at.
+
+**The actual bug:** basket eligibility required only `report_date <= prev`,
+where `prev` is the trading day immediately before the return being computed.
+For a stock that reported on day T, that allowed T to equal `prev`, so the
+very first return captured for that position was `close[T+1] / close[T] - 1`
+- the earnings reaction itself, not the drift that follows it. Checked
+directly on Micron: reported 2026-06-24, closed that day at $1,048 (pre-
+reaction), and the *very first day it entered the basket* captured the
+close-to-close jump to $1,213 the next session - a +15.7% single-day return
+that is the announcement reaction, not multi-week drift. That reaction is not
+capturable in real trading: by the time you could act on a report, the gap
+that produced it has already happened.
+
+**The fix, and what it did to the result:** require the report date to be at
+least `N` trading days before the basket-inclusion cutoff, so the reaction
+itself is structurally excluded from every captured return:
+
+| entry lag | CAGR% | MaxDD% | Sharpe |
+|---|---|---|---|
+| 0 days (the bug) | 39.28 | -6.93 | **2.59** |
+| 1 day | 33.55 | -7.09 | 2.24 |
+| 2 days | 31.28 | -7.52 | 2.13 |
+| 3 days | 25.88 | -7.74 | 1.89 |
+| 5 days | 23.24 | -7.98 | 1.72 |
+| 10 days | 19.98 | -8.43 | 1.46 |
+| 15 days | 21.65 | -9.20 | 1.54 |
+| 20 days | 20.52 | -9.15 | 1.45 |
+| **SPY, same window** | **23.05** | **-8.88** | **1.67** |
+
+**Monotonic decay, converging exactly onto SPY by day 5 and staying there
+through day 20.** There is no residual edge once the reaction itself is
+excluded - the entire earlier result was the reaction, full stop. This
+matches, and reinforces, the null result from the 4-mega-cap test earlier:
+PEAD does not show up in this data once measured correctly, in either the
+most-covered names or a broad mid-cap sample.
+
+### Why this matters beyond this one result
+
+This is the sharpest illustration in the whole project of the difference
+between a fast backtest and a validated one. The number looked spectacular,
+passed a real control, passed a transaction-cost check, and was still
+completely wrong - caught only by tracing individual trades back to actual
+prices on actual dates and asking whether the return being captured could
+physically have been earned by a real order placed after the information was
+public. Every number elsewhere in this repository has been checked the same
+way; this is the case where it mattered most.
+
+The one honest thing worth naming as a boundary, not a lead: the reaction
+itself (lag=0, Sharpe 2.59) is real money on the table in the sense that the
+reaction happens - it is simply not accessible after the fact. Trading it
+would require holding a position *before* an earnings report specifically to
+catch the reaction, which is a bet on a binary event with no demonstrated
+forecasting edge, not a systematic strategy. Not pursued, and should not be.
+
+### Where this leaves the search
+
+Seven mechanisms now tested against the validated rotation strategy across
+four sessions: factor ETFs, literal trade-level cut-losses-short/let-winners-
+run, two tax-engineering approaches, yield-curve timing (standalone and
+overlay), Fed-policy timing, and now PEAD on both a mega-cap and a broad
+mid-cap universe. All seven negative, several caught only after a promising-
+looking result turned out to be a bug. Rotation (9-month lookback, 8 slots,
+10% volatility cap) remains the only validated result in this project.
+
+---
+
 ## Layout
 
 ```
