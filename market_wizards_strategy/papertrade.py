@@ -12,7 +12,12 @@ gets written here is chosen before, which makes it the only honest measure of
 whether the strategy works.
 
 Fills are modelled at the next open after the signal, with 10bps of round-trip
-cost, matching the backtest's assumptions so the two are comparable.
+cost, matching the backtest's assumptions so the two are comparable. That cost
+is charged as COST_BPS/2 on each leg (sell the old position, buy the new one)
+so a full swap nets to COST_BPS round-trip - charging the full rate on each
+leg independently would double it, which is exactly the bug this comment
+replaced: this file used to do that, quietly running the live paper account
+at 2x the cost drag the backtest assumes for the same turnover.
 """
 
 import json
@@ -27,7 +32,7 @@ from rotation import (DEFAULT_UNIVERSE, RotationParams, month_end_prices, select
                       target_weights)
 
 STATE_FILE = "paper_state.json"
-COST_BPS = 10.0
+COST_BPS = 10.0  # round-trip; each leg below charges half of this
 
 
 def _path(directory=None):
@@ -84,7 +89,7 @@ def rebalance(state, target_weights, prices, note=""):
     for symbol in list(state["shares"]):
         if symbol not in target_weights and symbol in prices:
             qty = state["shares"].pop(symbol)
-            proceeds = qty * prices[symbol] * (1 - COST_BPS / 10_000)
+            proceeds = qty * prices[symbol] * (1 - COST_BPS / 2 / 10_000)
             state["cash"] += proceeds
             actions.append({"action": "sell", "symbol": symbol, "qty": qty,
                             "price": prices[symbol], "value": proceeds})
@@ -99,7 +104,7 @@ def rebalance(state, target_weights, prices, note=""):
         if abs(drift) < total * 0.01:      # ignore sub-1% drift, as a broker would
             continue
         qty_delta = drift / prices[symbol]
-        cost = abs(drift) * COST_BPS / 10_000
+        cost = abs(drift) * COST_BPS / 2 / 10_000
         state["cash"] -= drift + cost
         new_qty = current_qty + qty_delta
         if new_qty <= 1e-9:

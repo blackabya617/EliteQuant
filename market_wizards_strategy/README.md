@@ -866,6 +866,53 @@ built, several sessions ago.
 
 ---
 
+## Session 7: a second real bug, found by auditing the live cost model
+
+Kept digging into the code rather than searching for new signals, on the
+theory that the sizing-rule bug found last session might not be the only one.
+It wasn't.
+
+### The bug
+
+Every cost assumption elsewhere in this project - `rotation.py`'s
+`cost_bps`, the README's own text - treats `cost_bps=10.0` as a **round-trip**
+figure: the total cost of replacing one holding with another. `papertrade.py`,
+which is what the live paper account actually trades through, charged the
+full `COST_BPS` independently on *each leg* of a swap - the sell of the old
+position and the buy of the new one - which doubles it to an effective 20bps
+round-trip for a full rotation:
+
+| | cost for a full portfolio rotation |
+|---|---|
+| `backtest()` (validated numbers) | 10.00 bps |
+| `papertrade.py` (the bug) | **20.00 bps** |
+
+Verified directly: a account holding $10,000 in one name, rebalanced entirely
+into another, should lose $10 to costs (10bps) and was losing $20 (0.2%)
+before the fix.
+
+### What it did and didn't affect
+
+Checked the actual paper account: two rebalances since inception, ~$8,872
+total traded, so the bug had cost about **$4.40** in excess fees - real but
+immaterial at this account's age, and not worth a revisionist retroactive
+correction (the historical record stays as it happened; the fix applies
+going forward). Left uncorrected, the drag would have compounded to
+something worth caring about over a full year of monthly rebalancing.
+
+This did not touch any backtested number in this README - `backtest()` has
+always used the correct turnover-based cost model. It is the same shape of
+finding as the exposure bug in the previous session: a gap between what was
+validated and what was actually trading, not a flaw in the validation.
+
+### Fixed
+
+`papertrade.py` now charges `COST_BPS / 2` on each leg, so a full round-trip
+correctly nets to `COST_BPS` total, matching the convention used everywhere
+else in the project.
+
+---
+
 ## Layout
 
 ```
