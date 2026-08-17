@@ -3,10 +3,16 @@
 An honest attempt to build a Market Wizards-style swing system that beats the
 S&P 500, and a record of what the data actually said when we tested it.
 
-**Headline: nothing here reliably out-earns buying and holding SPY.** One
-variant matches SPY's risk-adjusted return with roughly half the drawdown.
-That is a real result, and it is a smaller result than the one this project set
-out to find.
+**Headline: nothing here out-earns buying and holding SPY, and for an account
+funded by regular contributions SPY is clearly better.** One variant does beat
+SPY on risk-adjusted terms - Sharpe 1.03 against 0.81, with a -17.8% worst
+drawdown against -46.3% - but it earns less (10.66% CAGR against 12.12%), and
+that gap widens rather than closes once contributions and taxes are modelled.
+
+Read `contributions.py` before deciding anything: for someone paying in every
+month, the drawdown protection that is this project's only validated edge is
+worth *less than nothing*, because a contributor's next payment is supposed to
+buy the dip. SPY ended ahead in 27 of 27 rolling start dates tested.
 
 ---
 
@@ -1102,6 +1108,51 @@ downstream by the staleness check rather than passing through unnoticed.
 The invariant tests grew to cover all of the above, and still gate the trade
 in CI. Five bugs found across five consecutive audits, every one of them
 downstream of a backtest that was correct throughout.
+
+---
+
+## Session 9b: the strategy is a poor fit for how this account is actually funded
+
+Every backtest above assumes a lump sum invested once. This account is not
+funded that way - it starts small and receives a contribution every paycheck -
+and modelling that changes the conclusion rather than refining it.
+
+A regular contributor has a different relationship with drawdowns than a
+lump-sum investor. When prices fall, the lump-sum investor simply loses money.
+The contributor's next payment buys more shares at the lower price. Drawdown
+protection - the single edge that survived every test in this project - is
+therefore worth much less to a contributor, and can be worth less than
+nothing: avoiding the decline also means skipping the cheap shares.
+
+Contributing $200/month from a $300 start, over the full 18.5-year window:
+
+| | rotation (9mo/top8, vol cap) | SPY buy & hold |
+|---|---|---|
+| paid in | $44,700 | $44,700 |
+| ended with | $150,373 | **$205,597** |
+| multiple on money in | 3.36x | **4.60x** |
+| worst drawdown along the way | **-11.2%** | -22.5% |
+
+**SPY produced 37% more wealth on identical contributions.** Across 27 rolling
+start dates the direction never reversed - SPY ended ahead in all 27, with the
+edge ranging from 8% (shortest window) to 37% (longest). Those windows overlap
+and share an end date, so that is a statement about consistency rather than 27
+independent samples, but the mechanism is not subtle and the sign never flips.
+
+### The actual trade being offered
+
+The contributor gives up roughly a third of terminal wealth to halve the
+drawdown experienced along the way: -11.2% instead of -22.5% at the worst
+point. That is the whole proposition, stated plainly.
+
+Whether it is worth taking is a genuine judgement call rather than a
+calculation, and it depends on something no backtest can measure: the
+drawdown you will actually sit through without selling. A -22.5% dip that
+gets panic-sold at the bottom is far worse than either column above. A
+strategy you can hold is better than a better strategy you cannot.
+
+What the numbers do settle is that this is a *cost*, not a free improvement,
+and a larger one than the lump-sum tables imply.
 
 ---
 
